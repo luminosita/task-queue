@@ -2,19 +2,9 @@ package common
 
 import (
 	"encoding/json"
-	"fmt"
-	"log"
+	"github.com/mnikita/task-queue/pkg/log"
 	"sync"
 )
-
-type RegisteredTasksError struct {
-	TaskName string
-}
-
-type TaskError struct {
-	Task *Task
-	Err  error
-}
 
 type registeredTasksSingleton map[string]TaskConstructor
 
@@ -22,14 +12,6 @@ var (
 	once            sync.Once
 	registeredTasks registeredTasksSingleton
 )
-
-func (e *RegisteredTasksError) Error() string {
-	return fmt.Sprintf("GetRegisteredTaskHandler(%s): unknown task name", e.TaskName)
-}
-
-func (e *TaskError) Error() string {
-	return fmt.Sprintf("TaskError(%s): %s", e.Task.Name, e.Err)
-}
 
 func newRegisteredTasks() registeredTasksSingleton {
 
@@ -42,8 +24,9 @@ func newRegisteredTasks() registeredTasksSingleton {
 	return registeredTasks
 }
 
+//RegisterTask registers tasks by name and stores TaskConstructor for TaskHandler instances creation
 func RegisterTask(taskName string, constructor TaskConstructor) {
-	log.Printf("Task registered: %s", taskName)
+	log.Logger().TaskRegistered(taskName)
 
 	newRegisteredTasks()[taskName] = constructor
 }
@@ -52,17 +35,19 @@ func unmarshalTask(task *Task, taskHandler TaskHandler) (err error) {
 	err = json.Unmarshal(task.Payload, taskHandler)
 
 	if err != nil {
-		return &TaskError{Task: task, Err: err}
+		return log.TaskError(task.Name, err)
 	}
 
 	return nil
 }
 
+//GetRegisteredTaskHandler retrieves TaskHandlers by name.
+//Task request payload is unmarshalled to initialize TaskHandler
 func GetRegisteredTaskHandler(task *Task) (TaskHandler, error) {
 	constructor, ok := newRegisteredTasks()[task.Name]
 
 	if !ok {
-		return nil, &RegisteredTasksError{TaskName: task.Name}
+		return nil, log.RegisteredTaskHandlerError(task.Name)
 	}
 
 	taskHandler := constructor()

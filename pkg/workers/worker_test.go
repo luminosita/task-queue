@@ -1,20 +1,30 @@
 package workers
 
 import (
+	"encoding/json"
+	"fmt"
 	"github.com/mnikita/task-queue/pkg/common"
 	"runtime"
 	"testing"
 )
 
 func TestLoadConfiguration(t *testing.T) {
-	got, err := loadConfiguration()
+	bytes, err := json.Marshal(&Configuration{Concurrency: 4})
 
 	if err != nil {
 		t.Error(err)
 	}
 
-	if got.concurrency != 0 {
-		t.Errorf("LoadConfiguration(%q) == %q, want %q", "concurrency", got.concurrency, 0)
+	fmt.Println(string(bytes))
+
+	got, err := LoadConfiguration([]byte("{\"Concurrency\":4}"))
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	if got.Concurrency != 4 {
+		t.Errorf("LoadConfiguration(%q) == %q, want %q", "concurrency", got.Concurrency, 4)
 	}
 }
 
@@ -27,7 +37,13 @@ func TestNewWorker(t *testing.T) {
 		t.Error(err)
 	}
 
-	worker, err := NewWorker(conn)
+	config, err := LoadConfiguration(nil)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	worker := NewWorker(conn, config)
 
 	if err != nil {
 		t.Error(err)
@@ -42,4 +58,7 @@ func TestNewWorker(t *testing.T) {
 
 //TODO: Test
 func TestHandleTask(t *testing.T) {
+	common.RegisterTask("test", func() common.TaskHandler {
+		return nil
+	})
 }
