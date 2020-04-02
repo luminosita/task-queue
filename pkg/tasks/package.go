@@ -1,6 +1,6 @@
 package tasks
 
-import "github.com/mnikita/task-queue/common"
+import "github.com/mnikita/task-queue/pkg/common"
 
 const AddTaskName string = "add"
 

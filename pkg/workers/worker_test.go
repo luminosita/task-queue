@@ -1,7 +1,7 @@
 package workers
 
 import (
-	"github.com/mnikita/task-queue/common"
+	"github.com/mnikita/task-queue/pkg/common"
 	"runtime"
 	"testing"
 )

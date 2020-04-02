@@ -2,7 +2,7 @@ package tasks
 
 import (
 	"encoding/json"
-	"github.com/mnikita/task-queue/common"
+	"github.com/mnikita/task-queue/pkg/common"
 	"testing"
 )
 
