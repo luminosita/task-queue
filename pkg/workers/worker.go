@@ -5,38 +5,123 @@ import (
 	"encoding/json"
 	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/log"
+	"github.com/mnikita/task-queue/pkg/util"
 	"runtime"
+	"sync"
+	"time"
 )
-
-//ErrorHandler defines worker error handler
-type ErrorHandler func(task *common.Task, err error)
-
-//PreTaskHandler defines worker pre task handler
-type PreTaskHandler func(task *common.Task)
-
-//PostTaskHandler defines worker post task handler
-type PostTaskHandler func(task *common.Task)
 
 //Worker stores configuration for server activation
 type Worker struct {
-	connection *common.Connection
-	taskQueue  chan *common.Task
+	taskQueue chan *common.Task
+
+	taskQueueQuit chan bool
+	quit          chan bool
 
 	config *Configuration
 
-	errorHandler    ErrorHandler
-	preTaskHandler  PreTaskHandler
-	postTaskHandler PostTaskHandler
+	eventHandler EventHandler
+
+	taskQueueCounter int
+	mux              sync.Mutex
 }
 
 //Configuration stores initialization data for worker server
 type Configuration struct {
+	//Number of pre-initialized task thread
 	Concurrency int
+
+	//Waiting time to accept new consumer task for processing
+	WaitToAcceptConsumerTask time.Duration
+
+	//Waiting time for worker to wait task threads closing
+	WaitTaskThreadsToClose time.Duration
+
+	//Waiting time to issue heartbeat
+	Heartbeat time.Duration
+}
+
+func (w *Worker) handle(wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	w.mux.Lock()
+	w.taskQueueCounter++
+	id := w.taskQueueCounter
+	w.mux.Unlock()
+
+	var runLoop bool = true
+
+	log.Logger().TaskThreadStarted(id)
+	defer log.Logger().TaskThreadEnded(id)
+
+	for runLoop {
+		select {
+		case <-w.taskQueueQuit:
+			runLoop = false
+		case task := <-w.taskQueue:
+			if task != nil {
+				w.handleTask(id, task)
+			} else {
+				runLoop = false
+			}
+		case <-time.After(w.config.Heartbeat):
+			w.OnThreadHeartbeat(id)
+		}
+	}
+}
+
+func (w *Worker) newTaskHandler(task *common.Task) (common.TaskHandler, error) {
+	return common.GetRegisteredTaskHandler(task)
+}
+
+func (w *Worker) handleTask(threadId int, task *common.Task) {
+	w.OnPreTask(task, threadId)
+
+	taskHandler, err := w.newTaskHandler(task)
+
+	if err != nil {
+		w.OnError(common.NewTaskThreadError(task, threadId, err))
+	}
+
+	err = taskHandler.Handle()
+
+	if err != nil {
+		w.OnError(common.NewTaskThreadError(task, threadId, err))
+	} else {
+		w.OnPostTask(task, threadId)
+	}
+}
+
+func getSystemConcurrency() (concurrency int) {
+	return runtime.GOMAXPROCS(0)
+}
+
+func (w *Worker) startTaskThreads(waitGroup *sync.WaitGroup) {
+	for i := 0; i < w.config.Concurrency; i++ {
+		waitGroup.Add(1)
+		go w.handle(waitGroup)
+	}
+}
+
+func (w *Worker) stopTaskThreads(waitGroup *sync.WaitGroup) {
+	log.Logger().TaskThreadsStopping(w.config.Concurrency)
+
+	close(w.taskQueue)
+
+	for i := 0; i < w.config.Concurrency; i++ {
+		w.taskQueueQuit <- true
+	}
+
+	err := util.WaitTimeout(waitGroup, w.config.WaitTaskThreadsToClose)
+
+	if err != nil {
+		log.Logger().Error(err)
+	}
 }
 
 //LoadConfiguration loads external confirmation
 func LoadConfiguration(configData []byte) (config *Configuration, err error) {
-	config = &Configuration{}
+	config = NewConfiguration()
 
 	err = json.Unmarshal(configData, config)
 
@@ -47,121 +132,123 @@ func LoadConfiguration(configData []byte) (config *Configuration, err error) {
 	return config, nil
 }
 
-func getSystemConcurrency() (concurrency int) {
-	return runtime.GOMAXPROCS(0)
-}
-
-//StopConsuming stops workers server
-func (w *Worker) StopConsuming(quit chan bool) (err error) {
-	quit <- true
-
-	return nil
+func NewConfiguration() *Configuration {
+	//make default configuration
+	return &Configuration{
+		Concurrency:              getSystemConcurrency(),
+		Heartbeat:                time.Second * 5,
+		WaitToAcceptConsumerTask: time.Second * 30,
+		WaitTaskThreadsToClose:   time.Second * 30,
+	}
 }
 
 //NewWorker creates and configures Worker instance
-func NewWorker(conn *common.Connection, config *Configuration) (worker *Worker) {
-	concurrency := config.Concurrency
-
-	if concurrency == 0 {
-		concurrency = getSystemConcurrency()
+func NewWorker(config *Configuration) *Worker {
+	if config == nil {
+		config = NewConfiguration()
 	}
 
-	var queue = make(chan *common.Task, concurrency)
+	var taskQueue = make(chan *common.Task, config.Concurrency)
 
-	worker = &Worker{connection: conn, taskQueue: queue, config: config}
+	var quit = make(chan bool)
+	var taskQueueQuit = make(chan bool, config.Concurrency)
 
-	worker.errorHandler = func(task *common.Task, err error) {
-		log.Logger().Error(err)
-	}
-
-	worker.preTaskHandler = func(task *common.Task) {
-		log.Logger().DefaultPreHandler(task.Name)
-	}
-
-	worker.postTaskHandler = func(task *common.Task) {
-		log.Logger().DefaultPostHandler(task.Name)
-	}
+	worker := &Worker{config: config, taskQueue: taskQueue, quit: quit, taskQueueQuit: taskQueueQuit}
 
 	return worker
 }
 
 //SetWorkerHandlers sets error, pre and post task handlers
-func (w *Worker) SetWorkerHandlers(errorHandler ErrorHandler, preTaskHandler PreTaskHandler, postTaskHandler PostTaskHandler) {
-	w.errorHandler = errorHandler
-	w.preTaskHandler = preTaskHandler
-	w.postTaskHandler = postTaskHandler
+func (w *Worker) SetEventHandler(eventHandler EventHandler) {
+	w.eventHandler = eventHandler
 }
 
-//StartConsuming starts workers server
-func (w *Worker) StartConsuming(quit chan bool) {
-	for i := 0; i < w.config.Concurrency; i++ {
-		go w.handle()
+//StartServer starts workers server
+func (w *Worker) StartServer() {
+	log.Logger().WorkerStarted()
+	var waitGroup sync.WaitGroup
+
+	w.startTaskThreads(&waitGroup)
+
+	go func(wg *sync.WaitGroup) {
+		<-w.quit
+		w.stopTaskThreads(wg)
+
+		w.quit <- true
+
+		close(w.quit)
+
+		return
+	}(&waitGroup)
+}
+
+//StopServer stops workers server
+func (w *Worker) StopServer() {
+	log.Logger().WorkerStopping()
+
+	//send stop signal to worker thread
+	w.quit <- true
+
+	//wait for worker thread stop confirmation
+	<-w.quit
+
+	log.Logger().WorkerEnded()
+}
+
+//Handles task payload from consumer
+func (w *Worker) HandlePayload(task *common.Task) {
+	select {
+	case w.taskQueue <- task:
+		w.OnTaskQueued(task)
+	case <-time.After(w.config.WaitToAcceptConsumerTask):
+		w.OnTaskAcceptTimeout(task)
 	}
-
-	// Wait to be told to exit.
-	<-quit
 }
 
-func (w *Worker) handle() {
-	for task := range w.taskQueue {
-		w.handleTask(task)
+func (w *Worker) OnError(err *common.TaskThreadError) {
+	log.Logger().Error(err)
+
+	if w.eventHandler != nil {
+		w.eventHandler.OnError(err)
 	}
 }
 
-func (w *Worker) newTaskHandler(task *common.Task) (common.TaskHandler, error) {
-	return common.GetRegisteredTaskHandler(task)
+func (w *Worker) OnPreTask(task *common.Task, threadId int) {
+	log.Logger().TaskPreHandler(task.Name, threadId)
+
+	if w.eventHandler != nil {
+		w.eventHandler.OnPreTask(task)
+	}
 }
 
-func (w *Worker) handleTask(task *common.Task) {
-	taskHandler, err := w.newTaskHandler(task)
+func (w *Worker) OnPostTask(task *common.Task, threadId int) {
+	log.Logger().TaskPostHandler(task.Name, threadId)
 
-	if err != nil {
-		w.errorHandler(task, err)
+	if w.eventHandler != nil {
+		w.eventHandler.OnPostTask(task)
 	}
-
-	w.preTaskHandler(task)
-
-	err = taskHandler.Handle(nil)
-
-	if err != nil {
-		w.errorHandler(task, err)
-	}
-
-	w.postTaskHandler(task)
 }
 
-//TODO: CHECK IMPLEMENTATION
-//type Server struct{ quit chan bool }
-//
-//func NewServer() *Server {
-//	s := &Server{make(chan bool)}
-//	go s.run()
-//	return s
-//}
-//
-//func (s *Server) run() {
-//	for {
-//		select {
-//		case <-s.quit:
-//			fmt.Println("finishing task")
-//			time.Sleep(time.Second)
-//			fmt.Println("task done")
-//			s.quit <- true
-//			return
-//		case <-time.After(time.Second):
-//			fmt.Println("running task")
-//		}
-//	}
-//}
-//func (s *Server) Stop() {
-//	fmt.Println("server stopping")
-//	s.quit <- true
-//	<-s.quit
-//	fmt.Println("server stopped")
-//}
-//
-//func main() {
-//	s := NewServer()
-//	time.Sleep(2 * time.Second)
-//	s.Stop()
-//}
+func (w *Worker) OnThreadHeartbeat(threadId int) {
+	log.Logger().ThreadHeartbeat(threadId, w.config.Heartbeat)
+
+	if w.eventHandler != nil {
+		w.eventHandler.OnThreadHeartbeat(threadId)
+	}
+}
+
+func (w *Worker) OnTaskQueued(task *common.Task) {
+	log.Logger().TaskQueued(task.Name)
+
+	if w.eventHandler != nil {
+		w.eventHandler.OnTaskQueued(task)
+	}
+}
+
+func (w *Worker) OnTaskAcceptTimeout(task *common.Task) {
+	log.Logger().TaskQueueTimeout(task.Name, w.config.WaitToAcceptConsumerTask)
+
+	if w.eventHandler != nil {
+		w.eventHandler.OnTaskAcceptTimeout(task)
+	}
+}

@@ -9,4 +9,8 @@ all: test build
 build:
 	$(GOBUILD) -v ./...
 test:
+ifdef LOGLEVEL
+	$(GOTEST) -v ./... -args $(LOGLEVEL)
+else
 	$(GOTEST) -v ./...
+endif
