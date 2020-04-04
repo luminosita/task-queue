@@ -49,7 +49,7 @@ func (w *Worker) handle(wg *sync.WaitGroup) {
 	id := w.taskQueueCounter
 	w.mux.Unlock()
 
-	var runLoop bool = true
+	var runLoop = true
 
 	log.Logger().TaskThreadStarted(id)
 	defer log.Logger().TaskThreadEnded(id)

@@ -39,8 +39,4 @@ type TaskConstructor func() TaskHandler
 //TaskPayloadHandler handles consumer task payload
 type TaskPayloadHandler interface {
 	HandlePayload(task *Task)
-
-	OnStartConsume()
-	OnEndConsume()
-	OnQuitSignalTimeout()
 }

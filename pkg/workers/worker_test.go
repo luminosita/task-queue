@@ -4,8 +4,10 @@ import (
 	"errors"
 	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/log"
+	"github.com/mnikita/task-queue/pkg/util"
 	"github.com/stretchr/testify/assert"
 	"os"
+	"reflect"
 	"runtime"
 	"testing"
 	"time"
@@ -31,12 +33,16 @@ type MockEventHandler struct {
 	expectedAcceptTaskTask    *common.Task
 	expectedAcceptTimeoutTask *common.Task
 
-	threadHeartbeatFlag   int
-	errorFlag             int
-	preTaskFlag           int
-	postTagFlag           int
-	acceptTaskFlag        int
-	acceptTaskTimeoutFlag int
+	*Flags
+}
+
+type Flags struct {
+	ThreadHeartbeatFlag int
+	ErrorFlag           int
+	PreTaskFlag         int
+	PostTagFlag         int
+	QueuedTaskFlag      int
+	QueueTimeoutFlag    int
 }
 
 type TestTask struct {
@@ -88,7 +94,7 @@ func (h *MockEventHandler) OnThreadHeartbeat(threadId int) {
 		assert.Equal(h.t, h.expectedThreadHeartbeatThreadId, threadId)
 	}
 
-	h.threadHeartbeatFlag--
+	h.ThreadHeartbeatFlag--
 }
 
 func (h *MockEventHandler) OnError(err *common.TaskThreadError) {
@@ -96,7 +102,7 @@ func (h *MockEventHandler) OnError(err *common.TaskThreadError) {
 		assert.Equal(h.t, h.expectedErrorErr, err)
 	}
 
-	h.errorFlag--
+	h.ErrorFlag--
 }
 
 func (h *MockEventHandler) OnPreTask(task *common.Task) {
@@ -104,7 +110,7 @@ func (h *MockEventHandler) OnPreTask(task *common.Task) {
 		assert.Equal(h.t, h.expectedPreTask, task)
 	}
 
-	h.preTaskFlag--
+	h.PreTaskFlag--
 }
 
 func (h *MockEventHandler) OnPostTask(task *common.Task) {
@@ -112,7 +118,7 @@ func (h *MockEventHandler) OnPostTask(task *common.Task) {
 		assert.Equal(h.t, h.expectedPostTask, task)
 	}
 
-	h.postTagFlag--
+	h.PostTagFlag--
 }
 
 func (h *MockEventHandler) OnTaskQueued(task *common.Task) {
@@ -120,7 +126,7 @@ func (h *MockEventHandler) OnTaskQueued(task *common.Task) {
 		assert.Equal(h.t, h.expectedAcceptTaskTask, task)
 	}
 
-	h.acceptTaskFlag--
+	h.QueuedTaskFlag--
 }
 
 func (h *MockEventHandler) OnTaskAcceptTimeout(task *common.Task) {
@@ -128,7 +134,7 @@ func (h *MockEventHandler) OnTaskAcceptTimeout(task *common.Task) {
 		assert.Equal(h.t, h.expectedAcceptTimeoutTask, task)
 	}
 
-	h.acceptTaskTimeoutFlag--
+	h.QueueTimeoutFlag--
 }
 
 func TestMain(m *testing.M) {
@@ -171,12 +177,9 @@ func setupTest(t *testing.T, mock *Mock, eh *MockEventHandler) func() {
 		//wait for threads to clean up
 		time.Sleep(time.Millisecond * 1)
 
-		assert.Equal(t, 0, eh.errorFlag)
-		assert.Equal(t, 0, eh.preTaskFlag)
-		assert.Equal(t, 0, eh.postTagFlag)
-		assert.Equal(t, 0, eh.threadHeartbeatFlag)
-		assert.Equal(t, 0, eh.acceptTaskFlag)
-		assert.Equal(t, 0, eh.acceptTaskTimeoutFlag)
+		if eh.Flags != nil {
+			util.AssertFlags(t, reflect.ValueOf(eh.Flags))
+		}
 	}
 }
 
@@ -208,7 +211,8 @@ func TestStartServer(t *testing.T) {
 }
 
 func TestHandleTask(t *testing.T) {
-	eh := &MockEventHandler{preTaskFlag: 1, postTagFlag: 1, acceptTaskFlag: 1}
+	flags := &Flags{PreTaskFlag: 1, PostTagFlag: 1, QueuedTaskFlag: 1}
+	eh := &MockEventHandler{Flags: flags}
 
 	mock := &Mock{Configuration: NewConfiguration()}
 
@@ -218,7 +222,8 @@ func TestHandleTask(t *testing.T) {
 }
 
 func TestHandleMultipleTask(t *testing.T) {
-	eh := &MockEventHandler{preTaskFlag: 10, postTagFlag: 10, acceptTaskFlag: 10}
+	flags := &Flags{PreTaskFlag: 10, PostTagFlag: 10, QueuedTaskFlag: 10}
+	eh := &MockEventHandler{Flags: flags}
 
 	mock := &Mock{Configuration: NewConfiguration()}
 
@@ -233,7 +238,8 @@ func TestHandleMultipleTask(t *testing.T) {
 }
 
 func TestKillServer(t *testing.T) {
-	eh := &MockEventHandler{preTaskFlag: 1, acceptTaskFlag: 1}
+	flags := &Flags{PreTaskFlag: 1, QueuedTaskFlag: 1}
+	eh := &MockEventHandler{Flags: flags}
 
 	mock := &Mock{Configuration: NewConfiguration()}
 	mock.WaitTaskThreadsToClose = time.Millisecond * 50
@@ -247,10 +253,11 @@ func TestHandlePayloadTimeout(t *testing.T) {
 	config := NewConfiguration()
 
 	//allow single task thread
-	config.Concurrency = 1
+	config.Concurrency = 2
 	config.WaitToAcceptConsumerTask = time.Millisecond * 10
 
-	eh := &MockEventHandler{preTaskFlag: 2, postTagFlag: 2, acceptTaskFlag: 2, acceptTaskTimeoutFlag: 1}
+	flags := &Flags{PreTaskFlag: 4, PostTagFlag: 4, QueuedTaskFlag: 4, QueueTimeoutFlag: 1}
+	eh := &MockEventHandler{Flags: flags}
 
 	mock := &Mock{Configuration: config}
 
@@ -260,8 +267,10 @@ func TestHandlePayloadTimeout(t *testing.T) {
 	mock.HandlePayload(&common.Task{Name: "long", Payload: []byte("{}")})
 
 	//second will be queued
-	mock.HandlePayload(&common.Task{Name: "test", Payload: []byte("{}")})
+	mock.HandlePayload(&common.Task{Name: "long", Payload: []byte("{}")})
 	//third should hang and issue timeout
+	mock.HandlePayload(&common.Task{Name: "test", Payload: []byte("{}")})
+	mock.HandlePayload(&common.Task{Name: "test", Payload: []byte("{}")})
 	mock.HandlePayload(&common.Task{Name: "test", Payload: []byte("{}")})
 
 	time.Sleep(time.Second)
@@ -272,9 +281,10 @@ func TestHeartbeat(t *testing.T) {
 
 	//allow single task thread
 	config.Concurrency = 1
-	config.Heartbeat = time.Millisecond * 10
+	config.Heartbeat = time.Millisecond * 15
 
-	eh := &MockEventHandler{preTaskFlag: 2, postTagFlag: 2, acceptTaskFlag: 2, threadHeartbeatFlag: 1}
+	flags := &Flags{PreTaskFlag: 2, PostTagFlag: 2, QueuedTaskFlag: 2, ThreadHeartbeatFlag: 1}
+	eh := &MockEventHandler{Flags: flags}
 
 	mock := &Mock{Configuration: config}
 
@@ -293,7 +303,8 @@ func TestHeartbeat(t *testing.T) {
 func TestTaskThreadError(t *testing.T) {
 	config := NewConfiguration()
 
-	eh := &MockEventHandler{preTaskFlag: 3, postTagFlag: 2, acceptTaskFlag: 3, errorFlag: 1}
+	flags := &Flags{PreTaskFlag: 3, PostTagFlag: 2, QueuedTaskFlag: 3, ErrorFlag: 1}
+	eh := &MockEventHandler{Flags: flags}
 
 	mock := &Mock{Configuration: config}
 
