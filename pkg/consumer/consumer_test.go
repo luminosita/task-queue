@@ -208,7 +208,9 @@ func newMock() *Mock {
 }
 
 func applyMock(mock *Mock) *Mock {
-	mock.Configuration = NewMockConfiguration()
+	if mock.Configuration == nil {
+		mock.Configuration = NewMockConfiguration()
+	}
 
 	return mock
 }
@@ -296,7 +298,7 @@ func TestProcessOneTask(t *testing.T) {
 func TestHeartbeat(t *testing.T) {
 	config := NewMockConfiguration()
 	//setting quit signal timeout slightly shorter than final Sleep time
-	config.Heartbeat = time.Millisecond * 15
+	config.Heartbeat = time.Millisecond * 20
 
 	flags := &Flags{
 		CloseFlag:         1,
@@ -313,7 +315,7 @@ func TestHeartbeat(t *testing.T) {
 	defer setupTest(t, conn)()
 
 	//needs to be slightly bigger than heartbeat
-	time.Sleep(time.Millisecond * 40)
+	time.Sleep(time.Millisecond * 30)
 }
 
 func TestReserveTimeout(t *testing.T) {
@@ -347,7 +349,8 @@ func TestBuryTask(t *testing.T) {
 			returnReserveId:   13,
 			returnReserveBody: []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"),
 
-			expectBuryId: 13,
+			expectBuryId:  13,
+			expectBuryPri: 1,
 
 			expectTask: buryTask,
 			returnHandlePayloadError: &common.TaskThreadError{ThreadId: 1, Task: buryTask,
