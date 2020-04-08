@@ -1,8 +1,10 @@
 package consumer
 
 import (
+	"errors"
 	"github.com/beanstalkd/go-beanstalk"
 	"github.com/mnikita/task-queue/pkg/common"
+	"github.com/mnikita/task-queue/pkg/connector"
 	"github.com/mnikita/task-queue/pkg/util"
 	"github.com/stretchr/testify/assert"
 	"reflect"
@@ -10,95 +12,180 @@ import (
 	"time"
 )
 
-type MockConnection struct {
+type Mock struct {
 	t *testing.T
 
-	config *Configuration
+	taskProcessEventHandler common.TaskProcessEventHandler
 
+	*Configuration
+
+	*Flags
+
+	td              *TestData
+	testDataCounter int
+	testData        []*TestData
+}
+
+type TestData struct {
 	returnReserveId    uint64
 	returnReserveBody  []byte
 	returnReserveError error
 
+	expectReleaseId    uint64
 	expectReleasePri   uint32
 	expectReleaseDelay time.Duration
 	returnReleaseError error
 
+	expectTouchId    uint64
+	returnTouchError error
+
+	expectBuryId    uint64
+	expectBuryPri   uint32
+	returnBuryError error
+
+	expectDeleteId    uint64
 	returnDeleteError error
-	returnCloseError  error
+
+	returnCloseError error
 
 	expectTask *common.Task
 
-	*Flags
+	handlePayloadSleep           time.Duration
+	returnHandlePayloadSuccess   bool
+	returnHandlePayloadHeartbeat bool
+	returnHandlePayloadError     *common.TaskThreadError
 }
 
 type Flags struct {
 	StartConsumerFlag int
 	EndConsumerFlag   int
-	QuitSignalFlag    int
+	HeartbeatFlag     int
 
 	ReserveFlag        int
 	ReleaseFlag        int
+	TouchFlag          int
+	BuryFlag           int
 	DeleteFlag         int
 	CloseFlag          int
 	HandlePayloadFlag  int
 	ReserveTimeoutFlag int
 }
 
-func (conn *MockConnection) OnReserveTimeout() {
+func (conn *Mock) OnReserveTimeout() {
 	conn.ReserveTimeoutFlag--
 }
 
-func (conn *MockConnection) OnStartConsume() {
+func (conn *Mock) OnStartConsume() {
 	conn.StartConsumerFlag--
 }
 
-func (conn *MockConnection) OnEndConsume() {
+func (conn *Mock) OnEndConsume() {
 	conn.EndConsumerFlag--
 }
 
-func (conn *MockConnection) OnQuitSignalTimeout() {
-	conn.QuitSignalFlag--
+func (conn *Mock) OnHeartbeat() {
+	conn.HeartbeatFlag--
 }
 
-func (conn *MockConnection) Reserve(timeout time.Duration) (id uint64, body []byte, err error) {
+func (conn *Mock) Reserve(timeout time.Duration) (id uint64, body []byte, err error) {
+	if conn.td.returnReserveId == 0 {
+		return 0, nil, nil
+	}
+
 	time.Sleep(timeout)
 
-	if conn.config != nil {
-		assert.Equal(conn.t, conn.config.WaitForConsumerReserve, timeout)
+	id, conn.td.returnReserveId = conn.td.returnReserveId, 0
+	body, conn.td.returnReserveBody = conn.td.returnReserveBody, nil
+	err, conn.td.returnReserveError = conn.td.returnReserveError, nil
+
+	if conn.Configuration != nil {
+		assert.Equal(conn.t, conn.WaitForConsumerReserve, timeout)
 	}
 
 	conn.ReserveFlag--
 
-	return conn.returnReserveId, conn.returnReserveBody, conn.returnReserveError
+	return
 }
 
-func (conn *MockConnection) Release(id uint64, pri uint32, delay time.Duration) error {
-	assert.Equal(conn.t, conn.returnReserveId, id)
-	assert.Equal(conn.t, conn.expectReleasePri, pri)
-	assert.Equal(conn.t, conn.expectReleaseDelay, delay)
+func (conn *Mock) Release(id uint64, pri uint32, delay time.Duration) (err error) {
+	assert.Equal(conn.t, conn.td.expectReleaseId, id)
+	assert.Equal(conn.t, conn.td.expectReleasePri, pri)
+	assert.Equal(conn.t, conn.td.expectReleaseDelay, delay)
+
+	err, conn.td.returnReleaseError = conn.td.returnReleaseError, nil
 
 	conn.ReleaseFlag--
 
-	return conn.returnReleaseError
+	return
 }
 
-func (conn *MockConnection) Delete(id uint64) error {
-	assert.Equal(conn.t, conn.returnReserveId, id)
+func (conn *Mock) Bury(id uint64, pri uint32) (err error) {
+	assert.Equal(conn.t, conn.td.expectBuryId, id)
+	assert.Equal(conn.t, conn.td.expectBuryPri, pri)
+
+	err, conn.td.returnReleaseError = conn.td.returnReleaseError, nil
+
+	conn.BuryFlag--
+
+	return
+}
+
+func (conn *Mock) Touch(id uint64) (err error) {
+	assert.Equal(conn.t, conn.td.expectTouchId, id)
+
+	err, conn.td.returnTouchError = conn.td.returnTouchError, nil
+
+	conn.TouchFlag--
+
+	return
+}
+
+func (conn *Mock) Delete(id uint64) (err error) {
+	assert.Equal(conn.t, conn.td.expectDeleteId, id)
+
+	err, conn.td.returnDeleteError = conn.td.returnDeleteError, nil
 
 	conn.DeleteFlag--
 
-	return conn.returnDeleteError
+	return
 }
 
-func (conn *MockConnection) Close() error {
+func (conn *Mock) Close() (err error) {
+	err, conn.td.returnCloseError = conn.td.returnCloseError, nil
+
 	conn.CloseFlag--
 
-	return conn.returnCloseError
+	return
 }
 
-func (conn *MockConnection) HandlePayload(task *common.Task) {
-	if conn.expectTask != nil {
-		assert.Equal(conn.t, conn.expectTask, task)
+func (conn *Mock) HandlePayload(task *common.Task) {
+	if conn.td.expectTask != nil {
+		assert.Equal(conn.t, conn.td.expectTask, task)
+	}
+
+	if conn.td.handlePayloadSleep != 0 {
+		time.Sleep(conn.td.handlePayloadSleep)
+	}
+
+	if conn.td.returnHandlePayloadError != nil {
+		conn.taskProcessEventHandler.OnTaskProcessEvent(&common.TaskProcessEvent{
+			EventId: common.Error, Task: task, Err: conn.td.returnHandlePayloadError})
+
+		conn.td.returnHandlePayloadError = nil
+	}
+
+	if conn.td.returnHandlePayloadSuccess {
+		conn.taskProcessEventHandler.OnTaskProcessEvent(&common.TaskProcessEvent{
+			EventId: common.Success, Task: task})
+
+		conn.td.returnHandlePayloadSuccess = false
+	}
+
+	if conn.td.returnHandlePayloadHeartbeat {
+		conn.taskProcessEventHandler.OnTaskProcessEvent(&common.TaskProcessEvent{
+			EventId: common.Heartbeat, Task: task})
+
+		conn.td.returnHandlePayloadHeartbeat = false
 	}
 
 	conn.HandlePayloadFlag--
@@ -108,25 +195,49 @@ func NewMockConfiguration() *Configuration {
 	config := NewConfiguration()
 
 	config.WaitForConsumerReserve = time.Millisecond * 10
-	config.QuitSignalTimeout = time.Second
+	config.Heartbeat = time.Second
 
 	return config
 }
 
-func setupTest(t *testing.T, conn *MockConnection) func() {
+func newMock() *Mock {
+	mock := &Mock{}
+	mock.Configuration = NewMockConfiguration()
+
+	return mock
+}
+
+func applyMock(mock *Mock) *Mock {
+	mock.Configuration = NewMockConfiguration()
+
+	return mock
+}
+
+func setupTest(t *testing.T, mock *Mock) func() {
 	//log.Logger().Level = logrus.TraceLevel
 	// Test setup
-	conn.t = t
+	mock.t = t
 
-	c := NewConsumer(conn, conn, conn)
-
-	c.config = conn.config
-
-	if c.config == nil {
-		c.config = NewMockConfiguration()
+	if mock == nil {
+		mock = newMock()
 	}
 
-	c.StartConsumer()
+	conn := connector.NewConnector(nil)
+
+	c := NewConsumer(mock.Configuration, mock, conn)
+
+	c.eventHandler = mock
+	c.taskPayloadHandler = mock
+
+	mock.taskProcessEventHandler = conn
+
+	mock.td = mock.testData[0]
+
+	err := c.StartConsumer()
+
+	if err != nil {
+		panic(err)
+	}
 
 	//wait for things to boot up
 	time.Sleep(time.Millisecond * 5)
@@ -138,92 +249,174 @@ func setupTest(t *testing.T, conn *MockConnection) func() {
 		//wait for threads to clean up
 		time.Sleep(time.Millisecond)
 
-		util.AssertFlags(t, reflect.ValueOf(conn.Flags))
+		util.AssertFlags(t, reflect.ValueOf(mock.Flags))
 	}
-}
-
-func TestLoadConfiguration(t *testing.T) {
-	got, err := LoadConfiguration([]byte("{\"WaitForConsumerReserve\":4, \"QuitSignalTimeout\":5}"))
-
-	if err != nil {
-		t.Error(err)
-	}
-
-	assert.Equal(t, time.Duration(4), got.WaitForConsumerReserve)
-	assert.Equal(t, time.Duration(5), got.QuitSignalTimeout)
 }
 
 func TestStartConsumer(t *testing.T) {
 	flags := &Flags{
-		ReserveFlag: 1, DeleteFlag: 1, CloseFlag: 1,
+		CloseFlag:         1,
 		StartConsumerFlag: 1, EndConsumerFlag: 1}
 
-	conn := &MockConnection{
-		Flags: flags,
-	}
+	conn := applyMock(&Mock{
+		testData: []*TestData{{}},
+		Flags:    flags,
+	})
 
 	defer setupTest(t, conn)()
 }
 
-func TestReserveTask(t *testing.T) {
+func TestProcessOneTask(t *testing.T) {
 	flags := &Flags{
 		ReserveFlag: 1, HandlePayloadFlag: 1, DeleteFlag: 1, CloseFlag: 1,
 		StartConsumerFlag: 1, EndConsumerFlag: 1,
 	}
 
-	conn := &MockConnection{
-		returnReserveId:   13,
-		returnReserveBody: []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"),
+	conn := applyMock(&Mock{
+		testData: []*TestData{{
+			returnReserveId:   13,
+			returnReserveBody: []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"),
 
-		expectTask: &common.Task{Name: "add", Payload: []byte("test")},
-		Flags:      flags,
-	}
+			expectTask: &common.Task{Id: 13, Name: "add", Payload: []byte("test")},
+
+			expectDeleteId:             13,
+			returnHandlePayloadSuccess: true,
+		}},
+		Flags: flags,
+	})
 
 	defer setupTest(t, conn)()
+
+	//wait for task process event
+	time.Sleep(time.Millisecond * 10)
 }
 
-func TestQuitSignal(t *testing.T) {
+func TestHeartbeat(t *testing.T) {
 	config := NewMockConfiguration()
 	//setting quit signal timeout slightly shorter than final Sleep time
-	config.QuitSignalTimeout = time.Millisecond * 20
+	config.Heartbeat = time.Millisecond * 20
 
 	flags := &Flags{
-		ReserveFlag: 2, DeleteFlag: 2, CloseFlag: 1,
-		StartConsumerFlag: 1, EndConsumerFlag: 1, QuitSignalFlag: 1}
+		CloseFlag:         1,
+		StartConsumerFlag: 1, EndConsumerFlag: 1, HeartbeatFlag: 1}
 
-	conn := &MockConnection{
-		config:            config,
-		returnReserveBody: nil,
-		Flags:             flags,
-	}
+	conn := applyMock(&Mock{
+		Configuration: config,
+		testData: []*TestData{{
+			returnReserveId: 0,
+		}},
+		Flags: flags,
+	})
 
 	defer setupTest(t, conn)()
 
-	time.Sleep(time.Millisecond * 40)
+	//needs to be slightly bigger than heartbeat
+	time.Sleep(time.Millisecond * 30)
 }
 
 func TestReserveTimeout(t *testing.T) {
 	flags := &Flags{
-		ReserveFlag: 1, HandlePayloadFlag: 0, DeleteFlag: 0, CloseFlag: 1,
-		StartConsumerFlag: 1, EndConsumerFlag: 1,
+		ReserveFlag: 1, CloseFlag: 1, StartConsumerFlag: 1, EndConsumerFlag: 1,
+		ReserveTimeoutFlag: 1,
 	}
 
-	conn := &MockConnection{
-		returnReserveId:    0,
-		returnReserveBody:  nil,
-		returnReserveError: beanstalk.ErrTimeout,
+	conn := applyMock(&Mock{
+		testData: []*TestData{{
+			returnReserveId:    13,
+			returnReserveError: beanstalk.ErrTimeout,
+		}},
 
-		expectTask: &common.Task{Name: "add", Payload: []byte("test")},
-		Flags:      flags,
-	}
+		Flags: flags,
+	})
 
 	defer setupTest(t, conn)()
 }
 
-func TestTaskErrorHandling(t *testing.T) {
-	t.Fail()
+func TestBuryTask(t *testing.T) {
+	flags := &Flags{
+		ReserveFlag: 1, HandlePayloadFlag: 1, BuryFlag: 1, CloseFlag: 1,
+		StartConsumerFlag: 1, EndConsumerFlag: 1,
+	}
+
+	buryTask := &common.Task{Id: 13, Name: "add", Payload: []byte("test")}
+
+	conn := applyMock(&Mock{
+		testData: []*TestData{{
+			returnReserveId:   13,
+			returnReserveBody: []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"),
+
+			expectBuryId: 13,
+
+			expectTask: buryTask,
+			returnHandlePayloadError: &common.TaskThreadError{ThreadId: 1, Task: buryTask,
+				Err: errors.New("test error")},
+		}},
+
+		Flags: flags,
+	})
+
+	defer setupTest(t, conn)()
+
+	//wait for task process event
+	time.Sleep(time.Millisecond * 10)
 }
 
-func TestReleaseTask(t *testing.T) {
-	t.Fail()
+func TestTouchTask(t *testing.T) {
+	t.FailNow()
+}
+
+func TestProcessMultipleTasks(t *testing.T) {
+	//TODO: Kod za promenu test data mora da ide na svaki metod zasebno
+	//TODO: Funkcije (Reserve, Delete, Release ...) imaju zasebne lifecycle-e zbog confirmation threada
+	//special treatment for test data
+	//conn.testDataCounter++
+
+	//if conn.testDataCounter < cap(conn.testData) {
+	//	conn.td = conn.testData[conn.testDataCounter]
+	//}
+
+	t.FailNow()
+
+	//flags := &Flags{
+	//	ReserveFlag: 3, HandlePayloadFlag: 3, DeleteFlag: 2, ReleaseFlag: 1, CloseFlag: 1,
+	//	StartConsumerFlag: 1, EndConsumerFlag: 1,
+	//}
+	//
+	//releaseTask := &common.Task{Id: 14, Name: "error", Payload: []byte("test")}
+	//
+	//conn := applyMock(&Mock{
+	//	testData: []*TestData{{
+	//		returnReserveId:   13,
+	//		returnReserveBody: []byte("{\"Name\":\"ok\",\"Payload\":\"dGVzdA==\"}"),
+	//
+	//		expectTask: &common.Task{Id: 13, Name: "ok", Payload: []byte("test")},
+	//
+	//		expectDeleteId:             13,
+	//		returnHandlePayloadSuccess: true,
+	//	},{
+	//		returnReserveId:   14,
+	//		returnReserveBody: []byte("{\"Name\":\"error\",\"Payload\":\"dGVzdA==\"}"),
+	//
+	//
+	//		expectReleaseId:             14,
+	//		expectTask: releaseTask,
+	//		returnHandlePayloadError: &common.TaskThreadError{ThreadId: 1, Task: releaseTask,
+	//			Err: errors.New("test error")},
+	//	},{
+	//		returnReserveId:   15,
+	//		returnReserveBody: []byte("{\"Name\":\"ok\",\"Payload\":\"dGVzdA==\"}"),
+	//
+	//		expectTask: &common.Task{Id: 15, Name: "ok", Payload: []byte("test")},
+	//
+	//		expectDeleteId:             15,
+	//		returnHandlePayloadSuccess: true,
+	//	}},
+	//
+	//	Flags: flags,
+	//})
+	//
+	//defer setupTest(t, conn)()
+	//
+	////wait for task process event
+	//time.Sleep(time.Millisecond * 10)
 }

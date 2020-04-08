@@ -1,14 +1,13 @@
-package workers
+package worker
 
 import (
 	"errors"
 	"github.com/mnikita/task-queue/pkg/common"
-	"github.com/mnikita/task-queue/pkg/log"
+	"github.com/mnikita/task-queue/pkg/connector"
 	"github.com/mnikita/task-queue/pkg/util"
 	"github.com/stretchr/testify/assert"
 	"os"
 	"reflect"
-	"runtime"
 	"testing"
 	"time"
 )
@@ -18,6 +17,7 @@ type Mock struct {
 
 	*Configuration
 	*Worker
+	common.TaskPayloadHandler
 }
 
 type MockEventHandler struct {
@@ -25,8 +25,8 @@ type MockEventHandler struct {
 
 	expectedThreadHeartbeatThreadId int
 
-	expectedErrorTask *common.Task
-	expectedErrorErr  error
+	expectedProcessTask  *common.Task
+	expectedProcessError bool
 
 	expectedPreTask           *common.Task
 	expectedPostTask          *common.Task
@@ -37,30 +37,26 @@ type MockEventHandler struct {
 }
 
 type Flags struct {
-	ThreadHeartbeatFlag int
-	ErrorFlag           int
-	PreTaskFlag         int
-	PostTagFlag         int
-	QueuedTaskFlag      int
-	QueueTimeoutFlag    int
+	WorkerStart          int
+	WorkerEnd            int
+	ThreadHeartbeat      int
+	PreTask              int
+	PostTag              int
+	QueuedTask           int
+	QueueTimeout         int
+	TaskProcessError     int
+	TaskProcessSuccess   int
+	TaskProcessHeartbeat int
 }
 
 type TestTask struct {
 	t *testing.T
 
-	callbackFlag     int
-	expectedCallback common.TaskHandlerCallback
+	eventHandler common.TaskProcessEventHandler
 }
 
-func (task *TestTask) SetCallback(callback common.TaskHandlerCallback) {
-	if task.expectedCallback != nil {
-		assert.Equal(task.t, task.expectedCallback, callback)
-	}
-
-	task.callbackFlag--
-	log.Logger().Tracef("Test OnPreTask: %d", task.callbackFlag)
-
-	assert.True(task.t, task.callbackFlag >= 0)
+func (task *TestTask) SetTaskProcessEventHandler(eventHandler common.TaskProcessEventHandler) {
+	task.eventHandler = eventHandler
 }
 
 func (task *TestTask) Handle() error {
@@ -70,7 +66,13 @@ func (task *TestTask) Handle() error {
 }
 
 type LongTask struct {
-	*TestTask
+	t *testing.T
+
+	eventHandler common.TaskProcessEventHandler
+}
+
+func (task *LongTask) SetTaskProcessEventHandler(eventHandler common.TaskProcessEventHandler) {
+	task.eventHandler = eventHandler
 }
 
 func (task *LongTask) Handle() error {
@@ -79,14 +81,30 @@ func (task *LongTask) Handle() error {
 	return nil
 }
 
+var errorTaskError = errors.New("ErrorTask test error")
+
 type ErrorTask struct {
-	*TestTask
+	t *testing.T
+
+	eventHandler common.TaskProcessEventHandler
+}
+
+func (task *ErrorTask) SetTaskProcessEventHandler(eventHandler common.TaskProcessEventHandler) {
+	task.eventHandler = eventHandler
 }
 
 func (task *ErrorTask) Handle() error {
 	time.Sleep(time.Millisecond * 10)
 
-	return errors.New("ErrorTask test error")
+	return errorTaskError
+}
+
+func (h *MockEventHandler) OnStartWorker() {
+	h.WorkerStart--
+}
+
+func (h *MockEventHandler) OnEndWorker() {
+	h.WorkerEnd--
 }
 
 func (h *MockEventHandler) OnThreadHeartbeat(threadId int) {
@@ -94,15 +112,31 @@ func (h *MockEventHandler) OnThreadHeartbeat(threadId int) {
 		assert.Equal(h.t, h.expectedThreadHeartbeatThreadId, threadId)
 	}
 
-	h.ThreadHeartbeatFlag--
+	h.ThreadHeartbeat--
 }
 
-func (h *MockEventHandler) OnError(err *common.TaskThreadError) {
-	if h.expectedErrorErr != nil {
-		assert.Equal(h.t, h.expectedErrorErr, err)
+func (h *MockEventHandler) OnTaskProcessEvent(event *common.TaskProcessEvent) {
+	if h.expectedProcessError {
+		assert.NotNil(h.t, event.Err)
 	}
 
-	h.ErrorFlag--
+	if h.expectedProcessTask != nil {
+		assert.Equal(h.t, h.expectedProcessTask, event.Task)
+	}
+
+	switch event.EventId {
+	case common.Success:
+		h.TaskProcessSuccess--
+	case common.Error:
+		h.TaskProcessError--
+	case common.Heartbeat:
+		h.TaskProcessHeartbeat--
+	}
+}
+
+//TODO: Implement
+func (h *MockEventHandler) OnResult(a ...interface{}) error {
+	panic("implement me")
 }
 
 func (h *MockEventHandler) OnPreTask(task *common.Task) {
@@ -110,7 +144,7 @@ func (h *MockEventHandler) OnPreTask(task *common.Task) {
 		assert.Equal(h.t, h.expectedPreTask, task)
 	}
 
-	h.PreTaskFlag--
+	h.PreTask--
 }
 
 func (h *MockEventHandler) OnPostTask(task *common.Task) {
@@ -118,7 +152,7 @@ func (h *MockEventHandler) OnPostTask(task *common.Task) {
 		assert.Equal(h.t, h.expectedPostTask, task)
 	}
 
-	h.PostTagFlag--
+	h.PostTag--
 }
 
 func (h *MockEventHandler) OnTaskQueued(task *common.Task) {
@@ -126,7 +160,7 @@ func (h *MockEventHandler) OnTaskQueued(task *common.Task) {
 		assert.Equal(h.t, h.expectedAcceptTaskTask, task)
 	}
 
-	h.QueuedTaskFlag--
+	h.QueuedTask--
 }
 
 func (h *MockEventHandler) OnTaskAcceptTimeout(task *common.Task) {
@@ -134,7 +168,7 @@ func (h *MockEventHandler) OnTaskAcceptTimeout(task *common.Task) {
 		assert.Equal(h.t, h.expectedAcceptTimeoutTask, task)
 	}
 
-	h.QueueTimeoutFlag--
+	h.QueueTimeout--
 }
 
 func TestMain(m *testing.M) {
@@ -155,24 +189,51 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func newMock() *Mock {
+	mock := &Mock{}
+	mock.Configuration = NewConfiguration()
+	mock.WaitTaskThreadsToClose = time.Second * 2
+
+	return mock
+}
+
 func setupTest(t *testing.T, mock *Mock, eh *MockEventHandler) func() {
 	// Test setup
+	if mock == nil {
+		mock = newMock()
+	}
+
 	mock.t = t
+
+	if eh == nil {
+		eh = &MockEventHandler{Flags: &Flags{WorkerStart: 1, WorkerEnd: 1}}
+	}
+
 	eh.t = t
 
-	worker := NewWorker(mock.Configuration)
+	config := connector.NewConfiguration()
+	config.WaitToAcceptConsumerTask = mock.Configuration.WaitToAcceptConsumerTask
+
+	conn := connector.NewConnector(config)
+
+	mock.TaskPayloadHandler = conn
+
+	conn.SetEventHandler(eh)
+
+	worker := NewWorker(mock.Configuration, conn)
 	worker.SetEventHandler(eh)
+	worker.SetTaskEventHandler(eh)
 
 	mock.Worker = worker
 
-	worker.StartServer()
+	worker.StartWorker()
 
 	//wait for things to boot up
 	time.Sleep(time.Millisecond * 5)
 
 	// Test teardown - return a closure for use by 'defer'
 	return func() {
-		worker.StopServer()
+		worker.StopWorker()
 
 		//wait for threads to clean up
 		time.Sleep(time.Millisecond * 1)
@@ -183,49 +244,28 @@ func setupTest(t *testing.T, mock *Mock, eh *MockEventHandler) func() {
 	}
 }
 
-func TestLoadConfiguration(t *testing.T) {
-	got, err := LoadConfiguration([]byte("{\"Concurrency\":4}"))
-
-	if err != nil {
-		t.Error(err)
-	}
-
-	assert.Equal(t, 4, got.Concurrency)
-}
-
-func TestNewWorker(t *testing.T) {
-	worker := NewWorker(nil)
-
-	want := runtime.GOMAXPROCS(0)
-
-	assert.Equal(t, want, cap(worker.taskQueue))
-}
-
 func TestStartServer(t *testing.T) {
-	eh := &MockEventHandler{}
-
-	mock := &Mock{Configuration: NewConfiguration()}
-	mock.WaitTaskThreadsToClose = time.Second * 2
-
-	defer setupTest(t, mock, eh)()
+	defer setupTest(t, nil, nil)()
 }
 
 func TestHandleTask(t *testing.T) {
-	flags := &Flags{PreTaskFlag: 1, PostTagFlag: 1, QueuedTaskFlag: 1}
+	flags := &Flags{WorkerStart: 1, WorkerEnd: 1, PreTask: 1, PostTag: 1, TaskProcessSuccess: 1, QueuedTask: 1}
 	eh := &MockEventHandler{Flags: flags}
 
-	mock := &Mock{Configuration: NewConfiguration()}
+	mock := newMock()
 
 	defer setupTest(t, mock, eh)()
 
 	mock.HandlePayload(&common.Task{Name: "test", Payload: []byte("{}")})
+	//TODO: Validate proper expectedProcessTask
+
 }
 
 func TestHandleMultipleTask(t *testing.T) {
-	flags := &Flags{PreTaskFlag: 10, PostTagFlag: 10, QueuedTaskFlag: 10}
+	flags := &Flags{WorkerStart: 1, WorkerEnd: 1, PreTask: 10, PostTag: 10, TaskProcessSuccess: 10, QueuedTask: 10}
 	eh := &MockEventHandler{Flags: flags}
 
-	mock := &Mock{Configuration: NewConfiguration()}
+	mock := newMock()
 
 	defer setupTest(t, mock, eh)()
 
@@ -238,10 +278,10 @@ func TestHandleMultipleTask(t *testing.T) {
 }
 
 func TestKillServer(t *testing.T) {
-	flags := &Flags{PreTaskFlag: 1, QueuedTaskFlag: 1}
+	flags := &Flags{WorkerStart: 1, WorkerEnd: 1, PreTask: 1, QueuedTask: 1}
 	eh := &MockEventHandler{Flags: flags}
 
-	mock := &Mock{Configuration: NewConfiguration()}
+	mock := newMock()
 	mock.WaitTaskThreadsToClose = time.Millisecond * 50
 
 	defer setupTest(t, mock, eh)()
@@ -250,16 +290,14 @@ func TestKillServer(t *testing.T) {
 }
 
 func TestHandlePayloadTimeout(t *testing.T) {
-	config := NewConfiguration()
+	flags := &Flags{WorkerStart: 1, WorkerEnd: 1, PreTask: 4, PostTag: 4, QueuedTask: 4, TaskProcessSuccess: 4,
+		QueueTimeout: 1}
 
-	//allow single task thread
-	config.Concurrency = 2
-	config.WaitToAcceptConsumerTask = time.Millisecond * 10
-
-	flags := &Flags{PreTaskFlag: 4, PostTagFlag: 4, QueuedTaskFlag: 4, QueueTimeoutFlag: 1}
 	eh := &MockEventHandler{Flags: flags}
 
-	mock := &Mock{Configuration: config}
+	mock := newMock()
+	mock.Concurrency = 2
+	mock.WaitToAcceptConsumerTask = time.Millisecond * 10
 
 	defer setupTest(t, mock, eh)()
 
@@ -277,16 +315,14 @@ func TestHandlePayloadTimeout(t *testing.T) {
 }
 
 func TestHeartbeat(t *testing.T) {
-	config := NewConfiguration()
+	flags := &Flags{WorkerStart: 1, WorkerEnd: 1, PreTask: 2, PostTag: 2, QueuedTask: 2, TaskProcessSuccess: 2,
+		ThreadHeartbeat: 1}
 
-	//allow single task thread
-	config.Concurrency = 1
-	config.Heartbeat = time.Millisecond * 15
-
-	flags := &Flags{PreTaskFlag: 2, PostTagFlag: 2, QueuedTaskFlag: 2, ThreadHeartbeatFlag: 1}
 	eh := &MockEventHandler{Flags: flags}
 
-	mock := &Mock{Configuration: config}
+	mock := newMock()
+	mock.Concurrency = 1
+	mock.Heartbeat = time.Millisecond * 15
 
 	defer setupTest(t, mock, eh)()
 
@@ -301,18 +337,39 @@ func TestHeartbeat(t *testing.T) {
 }
 
 func TestTaskThreadError(t *testing.T) {
-	config := NewConfiguration()
+	flags := &Flags{WorkerStart: 1, WorkerEnd: 1, PreTask: 3, PostTag: 2, QueuedTask: 3, TaskProcessSuccess: 2,
+		TaskProcessError: 1}
 
-	flags := &Flags{PreTaskFlag: 3, PostTagFlag: 2, QueuedTaskFlag: 3, ErrorFlag: 1}
+	errorTask := &common.Task{Name: "error", Payload: []byte("{}")}
+
+	//TODO: Test with multiple tasks test data
 	eh := &MockEventHandler{Flags: flags}
+	//	, expectedProcessError: true,
+	//		expectedProcessTask: errorTask}
 
-	mock := &Mock{Configuration: config}
+	mock := newMock()
 
 	defer setupTest(t, mock, eh)()
 
 	mock.HandlePayload(&common.Task{Name: "long", Payload: []byte("{}")})
-	mock.HandlePayload(&common.Task{Name: "error", Payload: []byte("{}")})
+	mock.HandlePayload(errorTask)
 	mock.HandlePayload(&common.Task{Name: "test", Payload: []byte("{}")})
 
 	time.Sleep(time.Millisecond * 200)
+}
+
+func TestGetUnregisteredTask(t *testing.T) {
+	flags := &Flags{WorkerStart: 1, WorkerEnd: 1, QueuedTask: 1, TaskProcessError: 1}
+	eh := &MockEventHandler{Flags: flags}
+
+	mock := newMock()
+
+	defer setupTest(t, mock, eh)()
+
+	mock.HandlePayload(&common.Task{Name: "unknown", Payload: []byte("{}")})
+}
+
+//TODO: Implement
+func TestTaskResult(t *testing.T) {
+	t.FailNow()
 }

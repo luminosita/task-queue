@@ -31,16 +31,6 @@ func RegisterTask(taskName string, constructor TaskConstructor) {
 	newRegisteredTasks()[taskName] = constructor
 }
 
-func unmarshalTask(task *Task, taskHandler TaskHandler) (err error) {
-	err = json.Unmarshal(task.Payload, taskHandler)
-
-	if err != nil {
-		return log.TaskError(task.Name, err)
-	}
-
-	return nil
-}
-
 //GetRegisteredTaskHandler retrieves TaskHandlers by name.
 //Task request payload is unmarshalled to initialize TaskHandler
 func GetRegisteredTaskHandler(task *Task) (TaskHandler, error) {
@@ -52,7 +42,11 @@ func GetRegisteredTaskHandler(task *Task) (TaskHandler, error) {
 
 	taskHandler := constructor()
 
-	err := unmarshalTask(task, taskHandler)
+	err := json.Unmarshal(task.Payload, taskHandler)
+
+	if err != nil {
+		return nil, log.InvalidTaskPayloadError(task.Id, task.Name, err)
+	}
 
 	return taskHandler, err
 }
