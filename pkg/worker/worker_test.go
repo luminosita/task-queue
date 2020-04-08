@@ -233,6 +233,8 @@ func setupTest(t *testing.T, mock *Mock, eh *MockEventHandler) func() {
 
 	// Test teardown - return a closure for use by 'defer'
 	return func() {
+		defer util.AssertPanic(t)
+
 		worker.StopWorker()
 
 		//wait for threads to clean up

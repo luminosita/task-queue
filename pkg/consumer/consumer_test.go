@@ -244,6 +244,8 @@ func setupTest(t *testing.T, mock *Mock) func() {
 
 	// Test teardown - return a closure for use by 'defer'
 	return func() {
+		defer util.AssertPanic(t)
+
 		c.StopConsumer()
 
 		//wait for threads to clean up
@@ -294,7 +296,7 @@ func TestProcessOneTask(t *testing.T) {
 func TestHeartbeat(t *testing.T) {
 	config := NewMockConfiguration()
 	//setting quit signal timeout slightly shorter than final Sleep time
-	config.Heartbeat = time.Millisecond * 20
+	config.Heartbeat = time.Millisecond * 15
 
 	flags := &Flags{
 		CloseFlag:         1,
@@ -311,7 +313,7 @@ func TestHeartbeat(t *testing.T) {
 	defer setupTest(t, conn)()
 
 	//needs to be slightly bigger than heartbeat
-	time.Sleep(time.Millisecond * 30)
+	time.Sleep(time.Millisecond * 40)
 }
 
 func TestReserveTimeout(t *testing.T) {

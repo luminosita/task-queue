@@ -173,8 +173,10 @@ func Start(config *Configuration) (err error) {
 		return err
 	}
 
-	defer c.StopConsumer()
+	//we want to stop consumer first, before worker
+	//defer works FILO
 	defer w.StopWorker()
+	defer c.StopConsumer()
 
 	config.configWatcher, err = util.NewConfigWatcher(config)
 	defer func() {
