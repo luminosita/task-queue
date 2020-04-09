@@ -16,3 +16,6 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 /tmp/
+/pkg/worker/mocks/mock_worker.go
+/pkg/consumer/mocks/mock_consumer.go
+/pkg/common/mocks/mock_task.go
