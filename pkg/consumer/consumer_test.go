@@ -218,3 +218,14 @@ func TestProcessMultipleTasks(t *testing.T) {
 
 	defer setupTest(m)()
 }
+
+func TestProcessEmptyPayload(t *testing.T) {
+	m := newMock(t)
+
+	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(
+		uint64(13), []byte("{\"Name\":\"laza\",\"Payload\":{}}"), nil)
+	m.handler.EXPECT().Bury(uint64(13), m.BuryPriority)
+	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).AnyTimes()
+
+	defer setupTest(m)()
+}

@@ -123,6 +123,12 @@ func (con *Consumer) handleConsume() {
 
 			if err != nil {
 				log.Logger().Error(err)
+
+				err = con.Bury(id, con.config.BuryPriority)
+
+				if err != nil {
+					log.Logger().Error(err)
+				}
 			}
 		}
 
