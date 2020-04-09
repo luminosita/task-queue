@@ -3,6 +3,7 @@ package util
 import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/mnikita/task-queue/pkg/log"
+	"reflect"
 	"runtime"
 	"sync"
 	"time"
@@ -18,20 +19,6 @@ type ConfigWatcher struct {
 	watcher *fsnotify.Watcher
 
 	watchStarted bool
-}
-
-func NewConfigWatcher(eventHandler ConfigWatcherEventHandler) (c *ConfigWatcher, err error) {
-	c = &ConfigWatcher{}
-
-	c.eventHandler = eventHandler
-
-	// creates a new file watcher
-	c.watcher, err = fsnotify.NewWatcher()
-	if err != nil {
-		return nil, err
-	}
-
-	return c, nil
 }
 
 func GetSystemConcurrency() (concurrency int) {
@@ -50,6 +37,31 @@ func WaitTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 	case <-time.After(timeout):
 		return log.WorkerWaitTimeoutError(timeout) // timed out
 	}
+}
+
+func IsNil(i interface{}) bool {
+	if i == nil {
+		return true
+	}
+	switch reflect.TypeOf(i).Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Array, reflect.Chan, reflect.Slice:
+		return reflect.ValueOf(i).IsNil()
+	}
+	return false
+}
+
+func NewConfigWatcher(eventHandler ConfigWatcherEventHandler) (c *ConfigWatcher, err error) {
+	c = &ConfigWatcher{}
+
+	c.eventHandler = eventHandler
+
+	// creates a new file watcher
+	c.watcher, err = fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	return c, nil
 }
 
 func (c *ConfigWatcher) WatchConfigFile(configFile string) (err error) {

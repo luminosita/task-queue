@@ -1,3 +1,4 @@
+//go:generate mockgen -destination=./mocks/mock_worker.go -package=mocks . EventHandler
 //Package workers provides primitives for configuration and starting worker queues
 package worker
 
@@ -9,6 +10,15 @@ import (
 	"sync"
 	"time"
 )
+
+type EventHandler interface {
+	OnStartWorker()
+	OnEndWorker()
+
+	OnPreTask(task *common.Task)
+	OnPostTask(task *common.Task)
+	OnThreadHeartbeat(threadId int)
+}
 
 //Worker stores configuration for server activation
 type Worker struct {
@@ -38,15 +48,6 @@ type Configuration struct {
 
 	//Waiting time to issue heartbeat
 	Heartbeat time.Duration
-}
-
-type EventHandler interface {
-	OnStartWorker()
-	OnEndWorker()
-
-	OnPreTask(task *common.Task)
-	OnPostTask(task *common.Task)
-	OnThreadHeartbeat(threadId int)
 }
 
 func (w *Worker) handle(wg *sync.WaitGroup) {
@@ -80,15 +81,17 @@ func (w *Worker) handleTask(threadId int, task *common.Task) {
 	taskHandler, err := common.GetRegisteredTaskHandler(task)
 
 	if err != nil {
-		w.OnTaskError(task, common.NewTaskThreadError(task, threadId, err))
+		w.OnTaskError(task, common.NewTaskThreadError(task, err))
 	} else {
 		w.OnPreTask(task, threadId)
 
-		taskHandler.SetTaskProcessEventHandler(w.taskEventHandler)
+		taskHandler.SetTaskProcessEventHandler(w)
+		taskHandler.SetTask(task)
+
 		err = taskHandler.Handle()
 
 		if err != nil {
-			w.OnTaskError(task, common.NewTaskThreadError(task, threadId, err))
+			w.OnTaskError(task, common.NewTaskThreadError(task, err))
 		} else {
 			w.OnPostTask(task, threadId)
 
@@ -130,7 +133,7 @@ func NewConfiguration() *Configuration {
 
 //NewWorker creates and configures Worker instance
 func NewWorker(config *Configuration, conn *connector.Connector) *Worker {
-	if config == nil {
+	if util.IsNil(config) {
 		config = NewConfiguration()
 	}
 
@@ -193,7 +196,7 @@ func (w *Worker) StopWorker() {
 func (w *Worker) OnStartWorker() {
 	log.Logger().WorkerStarted()
 
-	if w.eventHandler != nil {
+	if !util.IsNil(w.eventHandler) {
 		w.eventHandler.OnStartWorker()
 	}
 }
@@ -201,38 +204,15 @@ func (w *Worker) OnStartWorker() {
 func (w *Worker) OnEndWorker() {
 	log.Logger().WorkerEnded()
 
-	if w.eventHandler != nil {
+	if !util.IsNil(w.eventHandler) {
 		w.eventHandler.OnEndWorker()
-	}
-}
-
-func (w *Worker) OnTaskSuccess(task *common.Task) {
-	event := &common.TaskProcessEvent{EventId: common.Success,
-		Task: task}
-
-	log.Logger().TaskProcessEvent(event.GetEventType(), event.Task.Name)
-
-	if w.taskEventHandler != nil {
-		w.taskEventHandler.OnTaskProcessEvent(event)
-	}
-}
-
-func (w *Worker) OnTaskError(task *common.Task, err error) {
-	event := &common.TaskProcessEvent{EventId: common.Error,
-		Task: task,
-		Err:  err}
-
-	log.Logger().Error(err)
-
-	if w.taskEventHandler != nil {
-		w.taskEventHandler.OnTaskProcessEvent(event)
 	}
 }
 
 func (w *Worker) OnPreTask(task *common.Task, threadId int) {
 	log.Logger().TaskPre(task.Name, threadId)
 
-	if w.eventHandler != nil {
+	if !util.IsNil(w.eventHandler) {
 		w.eventHandler.OnPreTask(task)
 	}
 }
@@ -240,7 +220,7 @@ func (w *Worker) OnPreTask(task *common.Task, threadId int) {
 func (w *Worker) OnPostTask(task *common.Task, threadId int) {
 	log.Logger().TaskPost(task.Name, threadId)
 
-	if w.eventHandler != nil {
+	if !util.IsNil(w.eventHandler) {
 		w.eventHandler.OnPostTask(task)
 	}
 }
@@ -248,7 +228,39 @@ func (w *Worker) OnPostTask(task *common.Task, threadId int) {
 func (w *Worker) OnThreadHeartbeat(threadId int) {
 	log.Logger().ThreadHeartbeat(threadId, w.config.Heartbeat)
 
-	if w.eventHandler != nil {
+	if !util.IsNil(w.eventHandler) {
 		w.eventHandler.OnThreadHeartbeat(threadId)
+	}
+}
+
+func (w *Worker) OnTaskResult(task *common.Task, a ...interface{}) {
+	log.Logger().TaskResult(task.Name, a)
+
+	if !util.IsNil(w.taskEventHandler) {
+		w.taskEventHandler.OnTaskResult(task, a)
+	}
+}
+
+func (w *Worker) OnTaskSuccess(task *common.Task) {
+	log.Logger().TaskSuccess(task.Name)
+
+	if !util.IsNil(w.taskEventHandler) {
+		w.taskEventHandler.OnTaskSuccess(task)
+	}
+}
+
+func (w *Worker) OnTaskHeartbeat(task *common.Task) {
+	log.Logger().TaskHeartbeat(task.Name)
+
+	if !util.IsNil(w.taskEventHandler) {
+		w.taskEventHandler.OnTaskHeartbeat(task)
+	}
+}
+
+func (w *Worker) OnTaskError(task *common.Task, err error) {
+	log.Logger().Error(err)
+
+	if !util.IsNil(w.taskEventHandler) {
+		w.taskEventHandler.OnTaskError(task, err)
 	}
 }

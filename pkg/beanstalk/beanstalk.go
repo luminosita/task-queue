@@ -3,6 +3,7 @@ package beanstalk
 import (
 	"encoding/json"
 	gob "github.com/beanstalkd/go-beanstalk"
+	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/connector"
 	"github.com/mnikita/task-queue/pkg/consumer"
 	"github.com/mnikita/task-queue/pkg/log"
@@ -16,6 +17,8 @@ import (
 	"time"
 )
 
+const NetworkTcp = "tcp"
+
 type ServerConfiguration struct {
 	Worker    *worker.Configuration
 	Consumer  *consumer.Configuration
@@ -23,9 +26,10 @@ type ServerConfiguration struct {
 }
 
 type Configuration struct {
-	Tubes      []string
-	Url        string
-	ConfigFile string `json:"-"`
+	Tubes        []string
+	Url          string
+	ConfigFile   string `json:"-"`
+	TaskDataFile string `json:"-"`
 
 	*ServerConfiguration
 
@@ -37,17 +41,16 @@ type TubeSetAdapter struct {
 	*gob.Conn
 }
 
-func parseUrl(urlText string) (protocol string, addr string, err error) {
+func parseUrl(urlText string) (addr string, err error) {
 	serverUrl, err := url.Parse(urlText)
 
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
-	protocol = serverUrl.Scheme
 	addr = serverUrl.Host
 
-	return protocol, addr, nil
+	return addr, nil
 }
 
 func (c *Configuration) loadConfiguration() error {
@@ -91,7 +94,7 @@ func establishConnection(config *Configuration) (*TubeSetAdapter, error) {
 		return nil, err
 	}
 
-	network, addr, err := parseUrl(config.Url)
+	addr, err := parseUrl(config.Url)
 
 	if err != nil {
 		return nil, err
@@ -99,7 +102,7 @@ func establishConnection(config *Configuration) (*TubeSetAdapter, error) {
 
 	log.Logger().BeanUrl(config.Url)
 
-	bConn, err := gob.DialTimeout(network, addr, gob.DefaultDialTimeout)
+	bConn, err := gob.DialTimeout(NetworkTcp, addr, gob.DefaultDialTimeout)
 
 	if err != nil {
 		return nil, err
@@ -124,7 +127,7 @@ func establishConnection(config *Configuration) (*TubeSetAdapter, error) {
 	return tubeSetAdapter, nil
 }
 
-func Put(config *Configuration) (err error) {
+func Put(config *Configuration) error {
 	tubeSetAdapter, err := establishConnection(config)
 
 	if err != nil {
@@ -135,8 +138,19 @@ func Put(config *Configuration) (err error) {
 		err = tubeSetAdapter.Close()
 	}()
 
-	//TODO: Put task data read from file
-	_, err = tubeSetAdapter.Put([]byte("add"), 1, 0, time.Minute)
+	taskData, err := ioutil.ReadFile(config.TaskDataFile)
+
+	if err != nil {
+		return err
+	}
+	//test data before sending to Beanstalkd
+	err = json.Unmarshal(taskData, &common.Task{})
+
+	if err != nil {
+		return err
+	}
+
+	_, err = tubeSetAdapter.Put(taskData, 1, 0, time.Minute)
 
 	if err != nil {
 		return err

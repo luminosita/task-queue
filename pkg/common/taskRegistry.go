@@ -3,6 +3,7 @@ package common
 import (
 	"encoding/json"
 	"github.com/mnikita/task-queue/pkg/log"
+	"github.com/thoas/go-funk"
 	"sync"
 )
 
@@ -49,4 +50,9 @@ func GetRegisteredTaskHandler(task *Task) (TaskHandler, error) {
 	}
 
 	return taskHandler, err
+}
+
+//GetRegisteredTasks returns slice with all task names registered
+func GetRegisteredTasks() []string {
+	return funk.Keys(newRegisteredTasks()).([]string)
 }

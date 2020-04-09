@@ -1,3 +1,4 @@
+//go:generate mockgen -destination=./mocks/mock_consumer.go -package=mocks . EventHandler,Handler
 package consumer
 
 import (
@@ -6,6 +7,7 @@ import (
 	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/connector"
 	"github.com/mnikita/task-queue/pkg/log"
+	"github.com/mnikita/task-queue/pkg/util"
 	"time"
 )
 
@@ -15,6 +17,16 @@ type EventHandler interface {
 
 	OnReserveTimeout()
 	OnHeartbeat()
+}
+
+type Handler interface {
+	Reserve(timeout time.Duration) (id uint64, body []byte, err error)
+	Release(id uint64, pri uint32, delay time.Duration) error
+	Delete(id uint64) error
+	Bury(id uint64, pri uint32) error
+	Touch(id uint64) error
+
+	Close() error
 }
 
 //Consumer stores configuration for consumer activation
@@ -44,17 +56,14 @@ type Configuration struct {
 	BuryPriority    uint32
 }
 
+//hard coded to avoid dependency on go-beanstalkd library only for one constant
 var ErrTimeout = errors.New("timeout")
 
-type Handler interface {
-	Reserve(timeout time.Duration) (id uint64, body []byte, err error)
-	Release(id uint64, pri uint32, delay time.Duration) error
-	Delete(id uint64) error
-	Bury(id uint64, pri uint32) error
-	Touch(id uint64) error
-
-	Close() error
-}
+const (
+	//Channel size to allocate. It is important for task implementation to send event
+	//asynchronously to avoid blocking the execution thread
+	TaskEventChannelSize = 1
+)
 
 //HandlePayload unmarshal payload data into Task instance to invoke given TaskPayloadHandler
 func (con *Consumer) handlePayload(id uint64, body []byte) error {
@@ -73,6 +82,27 @@ func (con *Consumer) handlePayload(id uint64, body []byte) error {
 	con.taskPayloadHandler.HandlePayload(task)
 
 	return nil
+}
+
+func (con *Consumer) handleTaskEvent(taskProcessEvent *common.TaskProcessEvent) {
+	var err error
+
+	log.Logger().TaskProcessEvent(taskProcessEvent.GetEventType(), taskProcessEvent.Task.Name)
+
+	switch taskProcessEvent.EventId {
+	case common.Error:
+		err = con.Bury(taskProcessEvent.Task.Id, con.config.BuryPriority)
+	case common.Success:
+		err = con.Delete(taskProcessEvent.Task.Id)
+	case common.Heartbeat:
+		err = con.Touch(taskProcessEvent.Task.Id)
+	case common.Result:
+		//ignoring return result
+	}
+
+	if err != nil {
+		log.Logger().Error(err)
+	}
 }
 
 func (con *Consumer) handleConsume() {
@@ -101,22 +131,7 @@ func (con *Consumer) handleConsume() {
 			con.quitChannel <- true
 			return
 		case taskProcessEvent := <-con.taskEventChannel:
-			var err error
-
-			log.Logger().TaskProcessEvent(taskProcessEvent.GetEventType(), taskProcessEvent.Task.Name)
-
-			switch taskProcessEvent.EventId {
-			case common.Error:
-				err = con.Bury(taskProcessEvent.Task.Id, con.config.BuryPriority)
-			case common.Success:
-				err = con.Delete(taskProcessEvent.Task.Id)
-			case common.Heartbeat:
-				err = con.Touch(taskProcessEvent.Task.Id)
-			}
-
-			if err != nil {
-				log.Logger().Error(err)
-			}
+			con.handleTaskEvent(taskProcessEvent)
 		case <-time.After(con.config.Heartbeat):
 			con.OnHeartbeat()
 		}
@@ -132,8 +147,8 @@ func NewConsumer(config *Configuration, handler Handler,
 
 	//important to allocate at least one slot to avoid
 	//blocking TaskProcessEventHandler while writing to the channel
-	var taskEventChannel = make(chan *common.TaskProcessEvent, 1)
-	var quitChannel = make(chan bool)
+	var taskEventChannel = make(chan *common.TaskProcessEvent, TaskEventChannelSize)
+	var quitChannel = make(chan bool, 1)
 
 	con := &Consumer{config: config, quitChannel: quitChannel,
 		taskEventChannel: taskEventChannel, handler: handler}
@@ -167,11 +182,11 @@ func NewConfiguration() *Configuration {
 
 //StartConsumer starts consumer thread
 func (con *Consumer) StartConsumer() error {
-	if con.handler == nil {
+	if util.IsNil(con.handler) {
 		return log.MissingConsumerHandlerError()
 	}
 
-	if con.taskPayloadHandler == nil {
+	if util.IsNil(con.taskPayloadHandler) {
 		return log.MissingTaskPayloadHandlerError()
 	}
 
@@ -203,7 +218,7 @@ func (con *Consumer) StopConsumer() {
 func (con *Consumer) Reserve(timeout time.Duration) (id uint64, body []byte, err error) {
 	log.Logger().ConsumerReserve(timeout)
 
-	if con.handler != nil {
+	if !util.IsNil(con.handler) {
 		return con.handler.Reserve(timeout)
 	}
 
@@ -213,7 +228,7 @@ func (con *Consumer) Reserve(timeout time.Duration) (id uint64, body []byte, err
 func (con *Consumer) Release(id uint64, pri uint32, delay time.Duration) error {
 	log.Logger().ConsumerRelease(id, pri, delay)
 
-	if con.handler != nil {
+	if !util.IsNil(con.handler) {
 		return con.handler.Release(id, pri, delay)
 	}
 
@@ -223,7 +238,7 @@ func (con *Consumer) Release(id uint64, pri uint32, delay time.Duration) error {
 func (con *Consumer) Delete(id uint64) error {
 	log.Logger().ConsumerDelete(id)
 
-	if con.handler != nil {
+	if !util.IsNil(con.handler) {
 		return con.handler.Delete(id)
 	}
 
@@ -233,7 +248,7 @@ func (con *Consumer) Delete(id uint64) error {
 func (con *Consumer) Bury(id uint64, pri uint32) error {
 	log.Logger().ConsumerBury(id, pri)
 
-	if con.handler != nil {
+	if !util.IsNil(con.handler) {
 		return con.handler.Bury(id, pri)
 	}
 
@@ -243,7 +258,7 @@ func (con *Consumer) Bury(id uint64, pri uint32) error {
 func (con *Consumer) Touch(id uint64) error {
 	log.Logger().ConsumerTouch(id)
 
-	if con.handler != nil {
+	if !util.IsNil(con.handler) {
 		return con.handler.Touch(id)
 	}
 
@@ -253,7 +268,7 @@ func (con *Consumer) Touch(id uint64) error {
 func (con *Consumer) Close() error {
 	log.Logger().ConsumerClose()
 
-	if con.handler != nil {
+	if !util.IsNil(con.handler) {
 		return con.handler.Close()
 	}
 
@@ -263,7 +278,7 @@ func (con *Consumer) Close() error {
 func (con *Consumer) OnStartConsume() {
 	log.Logger().ConsumerStarted()
 
-	if con.eventHandler != nil {
+	if !util.IsNil(con.eventHandler) {
 		con.eventHandler.OnStartConsume()
 	}
 }
@@ -271,7 +286,7 @@ func (con *Consumer) OnStartConsume() {
 func (con *Consumer) OnEndConsume() {
 	log.Logger().ConsumerEnded()
 
-	if con.eventHandler != nil {
+	if !util.IsNil(con.eventHandler) {
 		con.eventHandler.OnEndConsume()
 	}
 }
@@ -279,7 +294,7 @@ func (con *Consumer) OnEndConsume() {
 func (con *Consumer) OnReserveTimeout() {
 	log.Logger().ConsumerReserveTimeout(con.config.WaitForConsumerReserve)
 
-	if con.eventHandler != nil {
+	if !util.IsNil(con.eventHandler) {
 		con.eventHandler.OnReserveTimeout()
 	}
 }
@@ -287,7 +302,7 @@ func (con *Consumer) OnReserveTimeout() {
 func (con *Consumer) OnHeartbeat() {
 	log.Logger().ConsumerHeartbeat(con.config.Heartbeat)
 
-	if con.eventHandler != nil {
+	if !util.IsNil(con.eventHandler) {
 		con.eventHandler.OnHeartbeat()
 	}
 }

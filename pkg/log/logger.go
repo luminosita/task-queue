@@ -43,8 +43,8 @@ var (
 	missingConsumerHandler    = Event{"ConsumerHandler not specified"}
 	missingTaskPayloadHandler = Event{"TaskPayloadHandler not specified"}
 	registeredTaskHandler     = Event{"RegisteredTaskHandler(%s): unknown task name"}
-	taskThread                = Event{"Task(%s) failed in thread(%d): %s"}
-	workerWaitTimeout         = Event{"Timed out waiting for taskFailed threads to close after %d seconds"}
+	taskThread                = Event{"Task(%s) failed: %s"}
+	workerWaitTimeout         = Event{"Timed out waiting for task threads to close after %d seconds"}
 
 	emptyReserveTaskPayload   = Event{"Task(%d) payload empty"}
 	invalidReserveTaskPayload = Event{"Invalid Reserved Task(%d) JSON format: %s"}
@@ -75,6 +75,9 @@ var (
 	consumerHeartbeat      = Event{"Consumer heartbeat after %d seconds"}
 
 	taskProcessEvent        = Event{"Task event (%s) received: (%s)"}
+	taskResult              = Event{"Task (%s) result: (%s)"}
+	taskSuccess             = Event{"Task success received: (%s)"}
+	taskHeartbeat           = Event{"Task heartbeat received: (%s)"}
 	taskProcessEventTimeout = Event{"Task event (%s) timeout after (%s) seconds: (%s)"}
 
 	consumerReserve = Event{"Reserve (timeout: %d seconds)"}
@@ -157,8 +160,8 @@ func InvalidTaskPayloadError(id uint64, taskName string, err error) error {
 }
 
 //Error message
-func TaskThreadError(taskName string, threadId int, err error) error {
-	return &Error{fmt.Sprintf(taskThread.message, taskName, threadId, err)}
+func TaskThreadError(taskName string, err error) error {
+	return &Error{fmt.Sprintf(taskThread.message, taskName, err)}
 }
 
 //Error message
@@ -184,6 +187,21 @@ func (l *StandardLogger) TaskPost(taskName string, threadId int) {
 //Log message
 func (l *StandardLogger) TaskProcessEvent(eventType string, taskName string) {
 	l.Infof(taskProcessEvent.message, eventType, taskName)
+}
+
+//Log message
+func (l *StandardLogger) TaskResult(taskName string, a ...interface{}) {
+	l.Infof(taskResult.message, taskName, a)
+}
+
+//Log message
+func (l *StandardLogger) TaskSuccess(taskName string) {
+	l.Infof(taskSuccess.message, taskName)
+}
+
+//Log message
+func (l *StandardLogger) TaskHeartbeat(taskName string) {
+	l.Infof(taskHeartbeat.message, taskName)
 }
 
 //Log message
