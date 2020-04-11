@@ -20,8 +20,6 @@ type Mock struct {
 
 	*cli.Configuration
 
-	cc *container.Configuration
-
 	handler *lmocks.MockHandler
 
 	ctrl *gomock.Controller
@@ -34,14 +32,11 @@ func newMock(t *testing.T, config *cli.Configuration) (m *Mock) {
 	m.t = t
 	m.Configuration = config
 
-	m.cc = container.NewConfiguration()
-
 	m.ctrl = gomock.NewController(t)
 
 	m.handler = lmocks.NewMockHandler(m.ctrl)
 
-	m.cli = cli.NewCli(config)
-	m.cli.SetContainerHandler(m.handler)
+	m.cli = cli.NewCli(config, m.handler)
 
 	return
 }
@@ -91,7 +86,7 @@ func TestPut(t *testing.T) {
 
 	bytes := []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}")
 
-	m.handler.EXPECT().ConsumerConnectionHandler().Return(ch)
+	m.handler.EXPECT().ConnectionHandler().Return(ch)
 	ch.EXPECT().Put(gomock.Eq(bytes), gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(0), nil)
 
 	err := m.cli.Put(bytes)
@@ -103,8 +98,10 @@ func TestWriteDefaultConfiguration(t *testing.T) {
 	m := newMock(t, nil)
 	defer setupTest(m)()
 
+	cc := &container.Configuration{}
+
 	w := mocks.NewMockWriter(m.ctrl)
-	m.handler.EXPECT().Config().Return(m.cc)
+	m.handler.EXPECT().Config().Return(cc)
 	w.EXPECT().Write(gomock.Any()).Return(10, nil)
 
 	n, err := m.cli.WriteDefaultConfiguration(w)

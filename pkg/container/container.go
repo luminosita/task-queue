@@ -4,6 +4,7 @@ package container
 
 import (
 	"encoding/json"
+	"github.com/google/wire"
 	"github.com/mnikita/task-queue/pkg/connection"
 	"github.com/mnikita/task-queue/pkg/connector"
 	"github.com/mnikita/task-queue/pkg/consumer"
@@ -14,20 +15,19 @@ import (
 	"os"
 )
 
+var WireSet = wire.NewSet(NewContainer, NewConfiguration,
+	wire.Bind(new(Handler), new(*Container)), worker.WireSet, consumer.WireSet,
+	connector.WireSet, connection.WireSet)
+
 type Handler interface {
 	Init(configFile string) error
 	Close() error
 
+	ConnectionHandler() consumer.ConnectionHandler
 	Connection() connection.Handler
 	Worker() worker.Handler
 	Consumer() consumer.Handler
-	ConsumerConnectionHandler() consumer.ConnectionHandler
 	Connector() connector.Handler
-
-	SetConnector(connector connector.Handler)
-	SetConsumer(consumer consumer.Handler)
-	SetConnection(connection connection.Handler)
-	SetWorker(worker worker.Handler)
 
 	Config() *Configuration
 }
@@ -50,7 +50,6 @@ type Container struct {
 	worker     worker.Handler
 	consumer   consumer.Handler
 	connector  connector.Handler
-	dialer     connection.Dialer
 }
 
 func (c *Configuration) load() error {
@@ -115,40 +114,37 @@ func (c *Configuration) closeConfigWatcher() (err error) {
 	return c.configWatcher.StopWatch()
 }
 
-func NewConfiguration() *Configuration {
+func NewConfiguration(workerConfig *worker.Configuration, consumerConfig *consumer.Configuration,
+	connectorConfig *connector.Configuration, connectionConfig *connection.Configuration) *Configuration {
+
 	config := &Configuration{}
-	config.WorkerConfig = worker.NewConfiguration()
-	config.ConsumerConfig = consumer.NewConfiguration()
-	config.ConnectorConfig = connector.NewConfiguration()
-	config.ConnectionConfig = connection.NewConfiguration()
+	config.WorkerConfig = workerConfig
+	config.ConsumerConfig = consumerConfig
+	config.ConnectorConfig = connectorConfig
+	config.ConnectionConfig = connectionConfig
 
 	return config
 }
 
 //TODO: Lazy load with singletons
 //TODO:(consumer and worker tests are not using all part of container). Waste of time to initialize everything
-func NewContainer(config *Configuration, dialer connection.Dialer) (c *Container) {
-	c = &Container{}
+func NewContainer(config *Configuration, connectionHandler connection.Handler,
+	connectorHandler connector.Handler, workerHandler worker.Handler,
+	consumerHandler consumer.Handler) *Container {
+
+	c := &Container{}
 
 	c.Configuration = config
 
-	c.dialer = dialer
+	c.connection = connectionHandler
+	c.connector = connectorHandler
+	c.worker = workerHandler
+	c.consumer = consumerHandler
 
-	//Skip all constructors
-	if config == nil {
-		//setting empty configuration
-		c.Configuration = &Configuration{}
+	//.NewConsumer(c.ConsumerConfig,
+	//	c.connector, c.connection.(consumer.ConnectionHandler))
 
-		return
-	}
-
-	c.connection = connection.NewConnection(c.ConnectionConfig, c.dialer)
-	c.connector = connector.NewConnector(c.ConnectorConfig)
-	c.worker = worker.NewWorker(c.WorkerConfig, c.connector)
-	c.consumer = consumer.NewConsumer(c.ConsumerConfig,
-		c.connector, c.connection.(consumer.ConnectionHandler))
-
-	return
+	return c
 }
 
 func (c *Container) Init(configFile string) (err error) {
@@ -211,28 +207,12 @@ func (c *Container) Consumer() consumer.Handler {
 	return c.consumer
 }
 
-func (c *Container) ConsumerConnectionHandler() consumer.ConnectionHandler {
+func (c *Container) ConnectionHandler() consumer.ConnectionHandler {
 	return c.consumer.(consumer.ConnectionHandler)
 }
 
 func (c *Container) Connector() connector.Handler {
 	return c.connector
-}
-
-func (c *Container) SetConnector(connector connector.Handler) {
-	c.connector = connector
-}
-
-func (c *Container) SetConsumer(consumer consumer.Handler) {
-	c.consumer = consumer
-}
-
-func (c *Container) SetConnection(connection connection.Handler) {
-	c.connection = connection
-}
-
-func (c *Container) SetWorker(worker worker.Handler) {
-	c.worker = worker
 }
 
 func (c *Container) Config() *Configuration {

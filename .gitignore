@@ -26,3 +26,5 @@
 /pkg/cli/mocks/mock_cli.go
 /pkg/connection/mocks/mock_connection.go
 /pkg/cli/mocks/mock_io.go
+/pkg/cli/wire_gen.go
+/pkg/container/wire_gen.go

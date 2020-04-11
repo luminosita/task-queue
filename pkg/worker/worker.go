@@ -3,6 +3,7 @@
 package worker
 
 import (
+	"github.com/google/wire"
 	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/connector"
 	"github.com/mnikita/task-queue/pkg/log"
@@ -10,6 +11,9 @@ import (
 	"sync"
 	"time"
 )
+
+var WireSet = wire.NewSet(NewWorker, NewConfiguration,
+	wire.Bind(new(Handler), new(*Worker)))
 
 type EventHandler interface {
 	OnStartWorker()
@@ -87,7 +91,6 @@ func (w *Worker) handle(wg *sync.WaitGroup) {
 	}
 }
 
-//TODO: Needs to execute in separate thread with Context
 func (w *Worker) handleTask(threadId int, task *common.Task) {
 	taskHandler, err := common.GetRegisteredTaskHandler(task)
 

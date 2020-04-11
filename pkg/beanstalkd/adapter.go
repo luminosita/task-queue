@@ -2,9 +2,12 @@ package beanstalkd
 
 import (
 	gob "github.com/beanstalkd/go-beanstalk"
+	"github.com/google/wire"
 	"github.com/mnikita/task-queue/pkg/connection"
 	"github.com/mnikita/task-queue/pkg/consumer"
 )
+
+var WireSet = wire.NewSet(NewDialer, NewConfiguration)
 
 const NetworkTcp = "tcp"
 
@@ -22,7 +25,7 @@ func NewConfiguration() *Configuration {
 	return &Configuration{}
 }
 
-func NewDialer(config *Configuration) *BeanstakldDialer {
+func NewDialer(config *Configuration) connection.Dialer {
 	return &BeanstakldDialer{Configuration: config}
 }
 

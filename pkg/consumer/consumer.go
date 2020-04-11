@@ -4,12 +4,16 @@ package consumer
 import (
 	"encoding/json"
 	"errors"
+	"github.com/google/wire"
 	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/connector"
 	"github.com/mnikita/task-queue/pkg/log"
 	"github.com/mnikita/task-queue/pkg/util"
 	"time"
 )
+
+var WireSet = wire.NewSet(NewConsumer, NewConfiguration,
+	wire.Bind(new(Handler), new(*Consumer)))
 
 type EventHandler interface {
 	OnStartConsume()
@@ -34,6 +38,8 @@ type ConnectionHandler interface {
 type Handler interface {
 	Init() error
 	Close() error
+
+	ConnectionHandler() ConnectionHandler
 
 	TaskEventChannel() chan<- *common.TaskProcessEvent
 
@@ -207,6 +213,10 @@ func (con *Consumer) Close() error {
 	}
 
 	return nil
+}
+
+func (con *Consumer) ConnectionHandler() ConnectionHandler {
+	return con.connectionHandler
 }
 
 func (con *Consumer) TaskEventChannel() chan<- *common.TaskProcessEvent {

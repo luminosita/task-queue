@@ -2,12 +2,17 @@
 package connection
 
 import (
+	"github.com/google/wire"
 	"github.com/mnikita/task-queue/pkg/consumer"
 	"github.com/mnikita/task-queue/pkg/log"
 	"github.com/mnikita/task-queue/pkg/util"
 	"net/url"
 	"time"
 )
+
+var WireSet = wire.NewSet(NewConnection, NewConfiguration,
+	wire.Bind(new(Handler), new(*Connection)),
+	wire.Bind(new(consumer.ConnectionHandler), new(*Connection)))
 
 type Dialer interface {
 	Dial(addr string, tubes []string) (consumer.ConnectionHandler, error)
@@ -92,8 +97,8 @@ func (c *Connection) establishConnection() error {
 	return nil
 }
 
-func NewConnection(config *Configuration, dialer Dialer) (connection *Connection) {
-	connection = &Connection{Configuration: config}
+func NewConnection(config *Configuration, dialer Dialer) *Connection {
+	connection := &Connection{Configuration: config}
 
 	connection.dialer = dialer
 

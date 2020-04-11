@@ -17,8 +17,6 @@ type Mock struct {
 
 	ctrl *gomock.Controller
 
-	cc *container.Configuration
-
 	dialerH     *bmocks.MockDialer
 	connectionH *bmocks.MockHandler
 	consumerH   *lmocks.MockHandler
@@ -39,14 +37,8 @@ func newMock(t *testing.T) *Mock {
 	m.workerH = wmocks.NewMockHandler(m.ctrl)
 	m.connectorH = connmocks.NewMockHandler(m.ctrl)
 
-	m.cc = container.NewConfiguration()
-
-	m.container = container.NewContainer(nil, m.dialerH)
-
-	m.container.SetConnection(m.connectionH)
-	m.container.SetWorker(m.workerH)
-	m.container.SetConsumer(m.consumerH)
-	m.container.SetConnector(m.connectorH)
+	m.container = container.NewContainer(&container.Configuration{},
+		m.connectionH, m.connectorH, m.workerH, m.consumerH)
 
 	return m
 }

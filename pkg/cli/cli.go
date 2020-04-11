@@ -3,7 +3,6 @@ package cli
 
 import (
 	"encoding/json"
-	"github.com/mnikita/task-queue/pkg/beanstalkd"
 	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/container"
 	"github.com/mnikita/task-queue/pkg/log"
@@ -18,8 +17,6 @@ import (
 type Handler interface {
 	Init() error
 	Close() error
-
-	SetContainerHandler(handler container.Handler)
 
 	Start(waitSignal bool) error
 	Put(taskData []byte) error
@@ -38,8 +35,6 @@ type Configuration struct {
 type Cli struct {
 	*Configuration
 
-	containerConfig *container.Configuration
-
 	container container.Handler
 }
 
@@ -51,21 +46,12 @@ func validateConfig(config *Configuration) (err error) {
 	return err
 }
 
-//TODO: Implement integration tests. Container Configuration not initialized properly. It will not startt
-func NewCli(config *Configuration) Handler {
+func NewCli(config *Configuration, handler container.Handler) *Cli {
 	cli := &Cli{Configuration: config}
 
-	dialer := beanstalkd.NewDialer(beanstalkd.NewConfiguration())
-
-	cli.containerConfig = container.NewConfiguration()
-
-	cli.container = container.NewContainer(cli.containerConfig, dialer)
+	cli.container = handler
 
 	return cli
-}
-
-func (cli *Cli) SetContainerHandler(handler container.Handler) {
-	cli.container = handler
 }
 
 func (cli *Cli) Init() (err error) {
@@ -106,7 +92,7 @@ func (cli *Cli) Put(taskData []byte) (err error) {
 		return err
 	}
 
-	ch := cli.container.ConsumerConnectionHandler()
+	ch := cli.container.ConnectionHandler()
 
 	_, err = ch.Put(taskData, uint32(1), 0, time.Minute)
 

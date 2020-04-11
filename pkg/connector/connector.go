@@ -2,11 +2,15 @@
 package connector
 
 import (
+	"github.com/google/wire"
 	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/log"
 	"github.com/mnikita/task-queue/pkg/util"
 	"time"
 )
+
+var WireSet = wire.NewSet(NewConnector, NewConfiguration,
+	wire.Bind(new(Handler), new(*Connector)))
 
 type Handler interface {
 	Init() error
