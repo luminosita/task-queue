@@ -1,8 +1,7 @@
-//go:generate mockgen -destination=./mocks/mock_connection.go -package=mocks . Handler,Dialer
-package beanstalkd
+//go:generate mockgen -destination=./mocks/mock_connection.go -package=mocks . Handler,Dialer,Channels,Channel
+package connection
 
 import (
-	gob "github.com/beanstalkd/go-beanstalk"
 	"github.com/mnikita/task-queue/pkg/consumer"
 	"github.com/mnikita/task-queue/pkg/log"
 	"github.com/mnikita/task-queue/pkg/util"
@@ -10,13 +9,11 @@ import (
 	"time"
 )
 
-const NetworkTcp = "tcp"
-
 type Dialer interface {
 	Dial(addr string) (consumer.ConnectionHandler, error)
 
-	CreateTubeSet() *gob.TubeSet
-	CreateTube() *gob.Tube
+	CreateChannels() Channels
+	CreateChannel() Channel
 }
 
 type Handler interface {
@@ -29,15 +26,22 @@ type Handler interface {
 type Configuration struct {
 	Tubes []string
 	Url   string
+}
 
-	dialer Dialer
+type Channels interface {
+	Reserve(timeout time.Duration) (id uint64, body []byte, err error)
+}
+
+type Channel interface {
+	Put(body []byte, pri uint32, delay, ttr time.Duration) (id uint64, err error)
 }
 
 type Connection struct {
-	*gob.TubeSet
-	*gob.Tube
+	Channels
+	Channel
+	consumer.ConnectionHandler
 
-	ch consumer.ConnectionHandler
+	dialer Dialer
 
 	*Configuration
 }
@@ -63,7 +67,7 @@ func (c *Connection) establishConnection() error {
 
 	log.Logger().BeanUrl(c.Url)
 
-	c.ch, err = c.dialer.Dial(addr)
+	c.ConnectionHandler, err = c.dialer.Dial(addr)
 
 	if err != nil {
 		return err
@@ -71,13 +75,13 @@ func (c *Connection) establishConnection() error {
 
 	if c.Tubes != nil {
 		if len(c.Tubes) > 1 {
-			c.TubeSet = c.dialer.CreateTubeSet()
+			c.Channels = c.dialer.CreateChannels()
 		} else {
-			c.Tube = c.dialer.CreateTube()
+			c.Channel = c.dialer.CreateChannel()
 		}
 	}
 
-	t, err := c.ch.ListTubes()
+	t, err := c.ListTubes()
 
 	if err != nil {
 		return err
@@ -91,11 +95,7 @@ func (c *Connection) establishConnection() error {
 func NewConnection(config *Configuration, dialer Dialer) (connection *Connection) {
 	connection = &Connection{Configuration: config}
 
-	connection.dialer = connection
-
-	if !util.IsNil(dialer) {
-		connection.dialer = dialer
-	}
+	connection.dialer = dialer
 
 	return connection
 }
@@ -116,29 +116,25 @@ func (c *Connection) Init() (err error) {
 }
 
 func (c *Connection) Close() error {
-	return c.ch.Close()
+	return c.ConnectionHandler.Close()
 }
 
 func (c *Connection) Dialer() Dialer {
 	return c.dialer
 }
 
-func (c *Connection) Dial(addr string) (consumer.ConnectionHandler, error) {
-	return gob.DialTimeout(NetworkTcp, addr, gob.DefaultDialTimeout)
-}
-
-func (c *Connection) CreateTubeSet() *gob.TubeSet {
-	return gob.NewTubeSet(c.ch.(*gob.Conn), c.Tubes...)
-}
-
-func (c *Connection) CreateTube() *gob.Tube {
-	return &gob.Tube{Conn: c.ch.(*gob.Conn), Name: c.Tubes[0]}
-}
-
 func (c *Connection) Reserve(timeout time.Duration) (id uint64, body []byte, err error) {
-	if util.IsNil(c.TubeSet) {
-		return c.ch.Reserve(timeout)
+	if util.IsNil(c.Channels) {
+		return c.ConnectionHandler.Reserve(timeout)
 	}
 
-	return c.TubeSet.Reserve(timeout)
+	return c.Channels.Reserve(timeout)
+}
+
+func (c *Connection) Put(body []byte, pri uint32, delay, ttr time.Duration) (id uint64, err error) {
+	if util.IsNil(c.Channel) {
+		return 0, log.MissingChannel()
+	}
+
+	return c.Channel.Put(body, pri, delay, ttr)
 }

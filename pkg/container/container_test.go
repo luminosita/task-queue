@@ -2,7 +2,7 @@ package container_test
 
 import (
 	"github.com/golang/mock/gomock"
-	bmocks "github.com/mnikita/task-queue/pkg/beanstalkd/mocks"
+	bmocks "github.com/mnikita/task-queue/pkg/connection/mocks"
 	connmocks "github.com/mnikita/task-queue/pkg/connector/mocks"
 	lmocks "github.com/mnikita/task-queue/pkg/consumer/mocks"
 	"github.com/mnikita/task-queue/pkg/container"
@@ -19,6 +19,7 @@ type Mock struct {
 
 	cc *container.Configuration
 
+	dialerH     *bmocks.MockDialer
 	connectionH *bmocks.MockHandler
 	consumerH   *lmocks.MockHandler
 	workerH     *wmocks.MockHandler
@@ -32,6 +33,7 @@ func newMock(t *testing.T) *Mock {
 	m.t = t
 	m.ctrl = gomock.NewController(t)
 
+	m.dialerH = bmocks.NewMockDialer(m.ctrl)
 	m.connectionH = bmocks.NewMockHandler(m.ctrl)
 	m.consumerH = lmocks.NewMockHandler(m.ctrl)
 	m.workerH = wmocks.NewMockHandler(m.ctrl)
@@ -39,7 +41,7 @@ func newMock(t *testing.T) *Mock {
 
 	m.cc = container.NewConfiguration()
 
-	m.container = container.NewContainer(m.cc)
+	m.container = container.NewContainer(nil, m.dialerH)
 
 	m.container.SetConnection(m.connectionH)
 	m.container.SetWorker(m.workerH)

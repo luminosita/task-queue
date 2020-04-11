@@ -41,6 +41,7 @@ type MessageId int
 //errors
 var (
 	missingCliUrl             = Event{"Connection URL not specified"}
+	missingChannel            = Event{"Channel not specified"}
 	missingConsumerHandler    = Event{"ConsumerHandler not specified"}
 	missingTaskPayloadHandler = Event{"TaskPayloadHandler not specified"}
 	registeredTaskHandler     = Event{"RegisteredTaskHandler(%s): unknown task name"}
@@ -135,6 +136,11 @@ func (e *Error) Error() string {
 //Error message
 func MissingCliUrl() error {
 	return &Error{missingCliUrl.message}
+}
+
+//Error message
+func MissingChannel() error {
+	return &Error{missingChannel.message}
 }
 
 //Error message

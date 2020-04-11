@@ -4,7 +4,7 @@ package container
 
 import (
 	"encoding/json"
-	"github.com/mnikita/task-queue/pkg/beanstalkd"
+	"github.com/mnikita/task-queue/pkg/connection"
 	"github.com/mnikita/task-queue/pkg/connector"
 	"github.com/mnikita/task-queue/pkg/consumer"
 	"github.com/mnikita/task-queue/pkg/log"
@@ -18,21 +18,21 @@ type Handler interface {
 	Init(configFile string) error
 	Close() error
 
-	Connection() beanstalkd.Handler
+	Connection() connection.Handler
 	Worker() worker.Handler
 	Consumer() consumer.Handler
 	Connector() connector.Handler
 
 	SetConnector(connector connector.Handler)
 	SetConsumer(consumer consumer.Handler)
-	SetConnection(connection beanstalkd.Handler)
+	SetConnection(connection connection.Handler)
 	SetWorker(worker worker.Handler)
 
 	Config() *Configuration
 }
 
 type Configuration struct {
-	ConnectionConfig *beanstalkd.Configuration
+	ConnectionConfig *connection.Configuration
 	WorkerConfig     *worker.Configuration
 	ConsumerConfig   *consumer.Configuration
 	ConnectorConfig  *connector.Configuration
@@ -45,10 +45,11 @@ type Configuration struct {
 type Container struct {
 	*Configuration
 
-	connection beanstalkd.Handler
+	connection connection.Handler
 	worker     worker.Handler
 	consumer   consumer.Handler
 	connector  connector.Handler
+	dialer     connection.Dialer
 }
 
 func (c *Configuration) load() error {
@@ -114,31 +115,39 @@ func (c *Configuration) closeConfigWatcher() (err error) {
 }
 
 func NewConfiguration() *Configuration {
-	return &Configuration{}
+	config := &Configuration{}
+	config.WorkerConfig = worker.NewConfiguration()
+	config.ConsumerConfig = consumer.NewConfiguration()
+	config.ConnectorConfig = connector.NewConfiguration()
+	config.ConnectionConfig = connection.NewConfiguration()
+
+	return config
 }
 
 //TODO: Lazy load with singletons
 //TODO:(consumer and worker tests are not using all part of container). Waste of time to initialize everything
-func NewContainer(config *Configuration) (c *Container) {
+func NewContainer(config *Configuration, dialer connection.Dialer) (c *Container) {
 	c = &Container{}
 
 	c.Configuration = config
 
-	if c.ConnectionConfig != nil {
-		c.connection = beanstalkd.NewConnection(c.ConnectionConfig, nil)
-	}
-	if c.ConnectorConfig != nil {
-		c.connector = connector.NewConnector(c.ConnectorConfig)
-	}
-	if c.WorkerConfig != nil {
-		c.worker = worker.NewWorker(c.WorkerConfig, c.connector)
-	}
-	if c.ConsumerConfig != nil {
-		c.consumer = consumer.NewConsumer(c.ConsumerConfig,
-			c.connector, c.connection.(consumer.ConnectionHandler))
+	c.dialer = dialer
+
+	//Skip all constructors
+	if config == nil {
+		//setting empty configuration
+		c.Configuration = &Configuration{}
+
+		return
 	}
 
-	return c
+	c.connection = connection.NewConnection(c.ConnectionConfig, c.dialer)
+	c.connector = connector.NewConnector(c.ConnectorConfig)
+	c.worker = worker.NewWorker(c.WorkerConfig, c.connector)
+	c.consumer = consumer.NewConsumer(c.ConsumerConfig,
+		c.connector, c.connection.(consumer.ConnectionHandler))
+
+	return
 }
 
 func (c *Container) Init(configFile string) (err error) {
@@ -150,25 +159,17 @@ func (c *Container) Init(configFile string) (err error) {
 	}
 
 	//Init Objects
-	if !util.IsNil(c.Connection()) {
-		if err = c.Connection().Init(); err != nil {
-			return err
-		}
+	if err = c.Connection().Init(); err != nil {
+		return err
 	}
-	if !util.IsNil(c.Worker()) {
-		if err = c.Worker().Init(); err != nil {
-			return err
-		}
+	if err = c.Worker().Init(); err != nil {
+		return err
 	}
-	if !util.IsNil(c.Consumer()) {
-		if err = c.Consumer().Init(); err != nil {
-			return err
-		}
+	if err = c.Consumer().Init(); err != nil {
+		return err
 	}
-	if !util.IsNil(c.Connector()) {
-		if err = c.Connector().Init(); err != nil {
-			return err
-		}
+	if err = c.Connector().Init(); err != nil {
+		return err
 	}
 
 	return nil
@@ -176,35 +177,28 @@ func (c *Container) Init(configFile string) (err error) {
 
 func (c *Container) Close() (err error) {
 	//Close Objects
-	if !util.IsNil(c.Connection()) {
-		err = c.Connector().Close()
-		if err != nil {
-			return err
-		}
+	err = c.Connector().Close()
+	if err != nil {
+		return err
 	}
-	if !util.IsNil(c.Consumer()) {
-		err = c.Consumer().Close()
-		if err != nil {
-			return err
-		}
+	err = c.Consumer().Close()
+	if err != nil {
+		return err
 	}
-	if !util.IsNil(c.Worker()) {
-		err = c.Worker().Close()
-		if err != nil {
-			return err
-		}
+	err = c.Worker().Close()
+	if err != nil {
+		return err
 	}
-	if !util.IsNil(c.Connection()) {
-		err = c.Connection().Close()
-		if err != nil {
-			return err
-		}
+	err = c.Connection().Close()
+	if err != nil {
+		return err
 	}
+
 	//Close Configuration
 	return c.close()
 }
 
-func (c *Container) Connection() beanstalkd.Handler {
+func (c *Container) Connection() connection.Handler {
 	return c.connection
 }
 
@@ -228,7 +222,7 @@ func (c *Container) SetConsumer(consumer consumer.Handler) {
 	c.consumer = consumer
 }
 
-func (c *Container) SetConnection(connection beanstalkd.Handler) {
+func (c *Container) SetConnection(connection connection.Handler) {
 	c.connection = connection
 }
 

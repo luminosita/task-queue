@@ -3,6 +3,7 @@ package cli
 
 import (
 	"encoding/json"
+	"github.com/mnikita/task-queue/pkg/beanstalkd"
 	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/consumer"
 	"github.com/mnikita/task-queue/pkg/container"
@@ -54,9 +55,11 @@ func validateConfig(config *Configuration) (err error) {
 func NewCli(config *Configuration) Handler {
 	cli := &Cli{Configuration: config}
 
+	dialer := beanstalkd.NewDialer(beanstalkd.NewConfiguration(config.Tubes))
+
 	cli.containerConfig = container.NewConfiguration()
 
-	cli.container = container.NewContainer(cli.containerConfig)
+	cli.container = container.NewContainer(cli.containerConfig, dialer)
 
 	return cli
 }

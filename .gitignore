@@ -22,3 +22,5 @@
 /pkg/container/mocks/mock_container.go
 /pkg/cli/mocks/mock_writer.go
 /pkg/beanstalkd/mocks/mock_connection.go
+/pkg/connector/mocks/mock_connector.go
+/pkg/cli/mocks/mock_cli.go
