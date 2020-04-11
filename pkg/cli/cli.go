@@ -50,6 +50,7 @@ func validateConfig(config *Configuration) (err error) {
 	return err
 }
 
+//TODO: Implement integration tests. Container Configuration not initialized properly. It will not startt
 func NewCli(config *Configuration) Handler {
 	cli := &Cli{Configuration: config}
 
