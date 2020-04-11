@@ -18,19 +18,17 @@ type BeanstakldDialer struct {
 	handler consumer.ConnectionHandler
 }
 
-func NewConfiguration(tubes []string) *Configuration {
-	c := &Configuration{}
-
-	c.Tubes = tubes
-
-	return c
+func NewConfiguration() *Configuration {
+	return &Configuration{}
 }
 
 func NewDialer(config *Configuration) *BeanstakldDialer {
 	return &BeanstakldDialer{Configuration: config}
 }
 
-func (b *BeanstakldDialer) Dial(addr string) (consumer.ConnectionHandler, error) {
+func (b *BeanstakldDialer) Dial(addr string, tubes []string) (consumer.ConnectionHandler, error) {
+	b.Tubes = tubes
+
 	return gob.DialTimeout(NetworkTcp, addr, gob.DefaultDialTimeout)
 }
 

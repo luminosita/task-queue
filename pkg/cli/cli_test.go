@@ -1,4 +1,4 @@
-//go:generate mockgen -destination=./mocks/mock_writer.go -package=mocks io Writer
+//go:generate mockgen -destination=./mocks/mock_io.go -package=mocks io Writer
 package cli_test
 
 import (
@@ -51,19 +51,23 @@ func setupTest(m *Mock) func() {
 		panic("Mock not initialized")
 	}
 
-	m.handler.EXPECT().Init(gomock.Eq(""))
-	m.handler.EXPECT().Close()
+	if m.Configuration != nil {
+		m.handler.EXPECT().Init(gomock.Eq(""))
+		m.handler.EXPECT().Close()
 
-	if err := m.cli.Init(); err != nil {
-		panic(err)
+		if err := m.cli.Init(); err != nil {
+			panic(err)
+		}
 	}
 
 	return func() {
 		defer m.ctrl.Finish()
 		defer util.AssertPanic(m.t)
 
-		if err := m.cli.Close(); err != nil {
-			panic(err)
+		if m.Configuration != nil {
+			if err := m.cli.Close(); err != nil {
+				panic(err)
+			}
 		}
 	}
 }
@@ -83,18 +87,20 @@ func TestPut(t *testing.T) {
 	m := newMock(t, config)
 	defer setupTest(m)()
 
-	err := m.cli.Put()
+	ch := cmocks.NewMockConnectionHandler(m.ctrl)
 
-	assert.NotNil(t, err)
+	bytes := []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}")
+
+	m.handler.EXPECT().ConsumerConnectionHandler().Return(ch)
+	ch.EXPECT().Put(gomock.Eq(bytes), gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(0), nil)
+
+	err := m.cli.Put(bytes)
+
+	assert.Nil(t, err)
 }
 
 func TestWriteDefaultConfiguration(t *testing.T) {
-	var config = &cli.Configuration{
-		Tubes: []string{"default"},
-		Url:   "mock",
-	}
-
-	m := newMock(t, config)
+	m := newMock(t, nil)
 	defer setupTest(m)()
 
 	w := mocks.NewMockWriter(m.ctrl)

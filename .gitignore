@@ -24,3 +24,5 @@
 /pkg/beanstalkd/mocks/mock_connection.go
 /pkg/connector/mocks/mock_connector.go
 /pkg/cli/mocks/mock_cli.go
+/pkg/connection/mocks/mock_connection.go
+/pkg/cli/mocks/mock_io.go

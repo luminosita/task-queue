@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"github.com/mnikita/task-queue/pkg/beanstalkd"
 	"github.com/mnikita/task-queue/pkg/common"
-	"github.com/mnikita/task-queue/pkg/consumer"
 	"github.com/mnikita/task-queue/pkg/container"
 	"github.com/mnikita/task-queue/pkg/log"
 	"io"
@@ -23,7 +22,8 @@ type Handler interface {
 	SetContainerHandler(handler container.Handler)
 
 	Start(waitSignal bool) error
-	Put() error
+	Put(taskData []byte) error
+	PutFromFile() error
 	WriteDefaultConfiguration(writer io.Writer) (int, error)
 	WriteDefaultConfigurationToFile(file string) (int, error)
 }
@@ -55,7 +55,7 @@ func validateConfig(config *Configuration) (err error) {
 func NewCli(config *Configuration) Handler {
 	cli := &Cli{Configuration: config}
 
-	dialer := beanstalkd.NewDialer(beanstalkd.NewConfiguration(config.Tubes))
+	dialer := beanstalkd.NewDialer(beanstalkd.NewConfiguration())
 
 	cli.containerConfig = container.NewConfiguration()
 
@@ -88,12 +88,17 @@ func (cli *Cli) Close() error {
 	return cli.container.Close()
 }
 
-func (cli *Cli) Put() error {
+func (cli *Cli) PutFromFile() (err error) {
 	taskData, err := ioutil.ReadFile(cli.TaskDataFile)
 
 	if err != nil {
 		return err
 	}
+
+	return cli.Put(taskData)
+}
+
+func (cli *Cli) Put(taskData []byte) (err error) {
 	//test data before sending to Beanstalkd
 	err = json.Unmarshal(taskData, &common.Task{})
 
@@ -101,9 +106,9 @@ func (cli *Cli) Put() error {
 		return err
 	}
 
-	ch := cli.container.Consumer().(consumer.ConnectionHandler)
+	ch := cli.container.ConsumerConnectionHandler()
 
-	_, err = ch.Put(taskData, 1, 0, time.Minute)
+	_, err = ch.Put(taskData, uint32(1), 0, time.Minute)
 
 	if err != nil {
 		return err

@@ -21,6 +21,7 @@ type Handler interface {
 	Connection() connection.Handler
 	Worker() worker.Handler
 	Consumer() consumer.Handler
+	ConsumerConnectionHandler() consumer.ConnectionHandler
 	Connector() connector.Handler
 
 	SetConnector(connector connector.Handler)
@@ -208,6 +209,10 @@ func (c *Container) Worker() worker.Handler {
 
 func (c *Container) Consumer() consumer.Handler {
 	return c.consumer
+}
+
+func (c *Container) ConsumerConnectionHandler() consumer.ConnectionHandler {
+	return c.consumer.(consumer.ConnectionHandler)
 }
 
 func (c *Container) Connector() connector.Handler {

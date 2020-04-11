@@ -10,7 +10,7 @@ import (
 )
 
 type Dialer interface {
-	Dial(addr string) (consumer.ConnectionHandler, error)
+	Dial(addr string, tubes []string) (consumer.ConnectionHandler, error)
 
 	CreateChannels() Channels
 	CreateChannel() Channel
@@ -67,13 +67,13 @@ func (c *Connection) establishConnection() error {
 
 	log.Logger().BeanUrl(c.Url)
 
-	c.ConnectionHandler, err = c.dialer.Dial(addr)
+	c.ConnectionHandler, err = c.dialer.Dial(addr, c.Tubes)
 
 	if err != nil {
 		return err
 	}
 
-	if c.Tubes != nil {
+	if c.Tubes != nil && len(c.Tubes) > 0 {
 		if len(c.Tubes) > 1 {
 			c.Channels = c.dialer.CreateChannels()
 		} else {
