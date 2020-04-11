@@ -1,3 +1,4 @@
+//go:generate mockgen -destination=./mocks/mock_connector.go -package=mocks . Handler
 package connector
 
 import (
@@ -7,6 +8,15 @@ import (
 	"time"
 )
 
+type Handler interface {
+	Init() error
+	Close() error
+
+	SetTaskEventChannel(eventChannel chan<- *common.TaskProcessEvent)
+	SetTaskQueueChannel(taskQueueChannel chan<- *common.Task)
+	SetEventHandler(eventHandler common.TaskQueueEventHandler)
+}
+
 type Connector struct {
 	taskEventChannel chan<- *common.TaskProcessEvent
 
@@ -14,7 +24,7 @@ type Connector struct {
 
 	eventHandler common.TaskQueueEventHandler
 
-	config *Configuration
+	*Configuration
 }
 
 type Configuration struct {
@@ -28,10 +38,16 @@ func (c *Connector) sendProcessEvent(event *common.TaskProcessEvent) {
 	go func() {
 		select {
 		case c.taskEventChannel <- event:
-		case <-time.After(c.config.WaitToAcceptEvent):
-			log.Logger().TaskProcessEventTimeout(event.GetEventType(), event.Task.Name, c.config.WaitToAcceptEvent)
+		case <-time.After(c.WaitToAcceptEvent):
+			log.Logger().TaskProcessEventTimeout(event.GetEventType(), event.Task.Name, c.WaitToAcceptEvent)
 		}
 	}()
+}
+
+func NewConnector(config *Configuration) *Connector {
+	c := &Connector{Configuration: config}
+
+	return c
 }
 
 func NewConfiguration() *Configuration {
@@ -41,14 +57,12 @@ func NewConfiguration() *Configuration {
 	}
 }
 
-func NewConnector(config *Configuration) *Connector {
-	if util.IsNil(config) {
-		config = NewConfiguration()
-	}
+func (c *Connector) Init() error {
+	return nil
+}
 
-	connector := &Connector{config: config}
-
-	return connector
+func (c *Connector) Close() error {
+	return nil
 }
 
 func (c *Connector) SetTaskEventChannel(
@@ -69,7 +83,7 @@ func (c *Connector) HandlePayload(task *common.Task) {
 	select {
 	case c.taskQueueChannel <- task:
 		c.OnTaskQueued(task)
-	case <-time.After(c.config.WaitToAcceptConsumerTask):
+	case <-time.After(c.WaitToAcceptConsumerTask):
 		c.OnTaskAcceptTimeout(task)
 	}
 }
@@ -105,7 +119,7 @@ func (c *Connector) OnTaskQueued(task *common.Task) {
 }
 
 func (c *Connector) OnTaskAcceptTimeout(task *common.Task) {
-	log.Logger().TaskQueueTimeout(task.Name, c.config.WaitToAcceptConsumerTask)
+	log.Logger().TaskQueueTimeout(task.Name, c.WaitToAcceptConsumerTask)
 
 	if !util.IsNil(c.eventHandler) {
 		c.eventHandler.OnTaskAcceptTimeout(task)

@@ -1,12 +1,12 @@
-package consumer
+package consumer_test
 
 import (
 	"errors"
-	"github.com/beanstalkd/go-beanstalk"
 	"github.com/golang/mock/gomock"
 	"github.com/mnikita/task-queue/pkg/common"
 	cmocks "github.com/mnikita/task-queue/pkg/common/mocks"
 	"github.com/mnikita/task-queue/pkg/connector"
+	"github.com/mnikita/task-queue/pkg/consumer"
 	lmocks "github.com/mnikita/task-queue/pkg/consumer/mocks"
 	"github.com/mnikita/task-queue/pkg/util"
 	"testing"
@@ -18,23 +18,18 @@ type Mock struct {
 
 	taskProcessEventHandler common.TaskProcessEventHandler
 
-	*Configuration
-
 	ctrl *gomock.Controller
 
-	handler       *lmocks.MockHandler
+	cc    *consumer.Configuration
+	connC *connector.Configuration
+
+	connectionH   *lmocks.MockConnectionHandler
 	consumerEh    *lmocks.MockEventHandler
 	taskPlh       *cmocks.MockTaskPayloadHandler
 	taskProcessEh *cmocks.MockTaskProcessEventHandler
-}
 
-func NewMockConfiguration() *Configuration {
-	config := NewConfiguration()
-
-	config.WaitForConsumerReserve = time.Millisecond * 10
-	config.Heartbeat = time.Second
-
-	return config
+	consumer  consumer.Handler
+	connector connector.Handler
 }
 
 func newMock(t *testing.T) *Mock {
@@ -42,11 +37,23 @@ func newMock(t *testing.T) *Mock {
 	m.t = t
 	m.ctrl = gomock.NewController(t)
 
-	m.Configuration = NewMockConfiguration()
-
-	m.handler = lmocks.NewMockHandler(m.ctrl)
+	m.connectionH = lmocks.NewMockConnectionHandler(m.ctrl)
 	m.consumerEh = lmocks.NewMockEventHandler(m.ctrl)
 	m.taskPlh = cmocks.NewMockTaskPayloadHandler(m.ctrl)
+
+	m.cc = consumer.NewConfiguration()
+	m.connC = connector.NewConfiguration()
+
+	m.connector = connector.NewConnector(m.connC)
+	m.consumer = consumer.NewConsumer(m.cc, m.connector, m.connectionH)
+
+	m.cc.WaitForConsumerReserve = time.Millisecond * 10
+	m.cc.Heartbeat = time.Second
+
+	m.consumer.SetEventHandler(m.consumerEh)
+	m.consumer.SetTaskPayloadHandler(m.taskPlh)
+
+	m.taskProcessEventHandler = m.connector.(common.TaskProcessEventHandler)
 
 	return m
 }
@@ -56,23 +63,19 @@ func setupTest(m *Mock) func() {
 		panic("Mock not initialized")
 	}
 
+	if err := m.consumer.Init(); err != nil {
+		panic(err)
+	}
+	if err := m.connector.Init(); err != nil {
+		panic(err)
+	}
+
 	m.consumerEh.EXPECT().OnStartConsume()
 	m.consumerEh.EXPECT().OnEndConsume()
 
-	m.handler.EXPECT().Close()
+	m.connectionH.EXPECT().Close()
 
-	config := connector.NewConfiguration()
-	conn := connector.NewConnector(config)
-
-	c := NewConsumer(m.Configuration, m.handler, conn)
-	c.SetEventHandler(m.consumerEh)
-	c.SetTaskPayloadHandler(m.taskPlh)
-
-	m.taskProcessEventHandler = conn
-
-	err := c.StartConsumer()
-
-	if err != nil {
+	if err := m.consumer.StartConsumer(); err != nil {
 		panic(err)
 	}
 
@@ -87,11 +90,19 @@ func setupTest(m *Mock) func() {
 		defer m.ctrl.Finish()
 		defer util.AssertPanic(m.t)
 
-		c.StopConsumer()
+		m.consumer.StopConsumer()
 
 		//wait for threads to clean up
 		time.Sleep(time.Millisecond * 10)
 	}
+}
+
+func (m *Mock) getWaitForConsumerReserve() time.Duration {
+	return m.cc.WaitForConsumerReserve
+}
+
+func (m *Mock) getBuryPriority() uint32 {
+	return m.cc.BuryPriority
 }
 
 func TestProcessOneTask(t *testing.T) {
@@ -99,14 +110,14 @@ func TestProcessOneTask(t *testing.T) {
 
 	reserveTask := &common.Task{Id: 13, Name: "add", Payload: []byte("test")}
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
 		uint64(13), []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"), nil)
-	m.handler.EXPECT().Delete(uint64(13))
+	m.connectionH.EXPECT().Delete(uint64(13))
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(reserveTask)).Do(func(task *common.Task) {
 		m.taskProcessEventHandler.OnTaskSuccess(task)
 	})
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).AnyTimes()
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).AnyTimes()
 
 	defer setupTest(m)()
 }
@@ -114,9 +125,9 @@ func TestProcessOneTask(t *testing.T) {
 func TestHeartbeat(t *testing.T) {
 	m := newMock(t)
 	//setting quit signal timeout slightly shorter than final Sleep time
-	m.Heartbeat = time.Millisecond * 50
+	m.cc.Heartbeat = time.Millisecond * 50
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(uint64(0), nil, nil).AnyTimes()
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(uint64(0), nil, nil).AnyTimes()
 	m.consumerEh.EXPECT().OnHeartbeat()
 
 	defer setupTest(m)()
@@ -128,7 +139,7 @@ func TestHeartbeat(t *testing.T) {
 func TestReserveTimeout(t *testing.T) {
 	m := newMock(t)
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(uint64(13), nil, beanstalk.ErrTimeout)
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(uint64(13), nil, consumer.ErrTimeout)
 	m.consumerEh.EXPECT().OnReserveTimeout()
 
 	defer setupTest(m)()
@@ -141,14 +152,14 @@ func TestBuryTask(t *testing.T) {
 	threadError := &common.TaskThreadError{Task: buryTask,
 		Err: errors.New("test error")}
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
 		uint64(13), []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"), nil)
-	m.handler.EXPECT().Bury(uint64(13), m.BuryPriority)
+	m.connectionH.EXPECT().Bury(uint64(13), m.getBuryPriority())
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(buryTask)).Do(func(task *common.Task) {
 		m.taskProcessEventHandler.OnTaskError(task, threadError)
 	})
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).AnyTimes()
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).AnyTimes()
 
 	defer setupTest(m)()
 }
@@ -158,10 +169,10 @@ func TestTouchTask(t *testing.T) {
 
 	deleteTask := &common.Task{Id: 13, Name: "add", Payload: []byte("test")}
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
 		uint64(13), []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"), nil)
-	m.handler.EXPECT().Touch(uint64(13))
-	m.handler.EXPECT().Delete(uint64(13))
+	m.connectionH.EXPECT().Touch(uint64(13))
+	m.connectionH.EXPECT().Delete(uint64(13))
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(deleteTask)).Do(func(task *common.Task) {
 
@@ -169,7 +180,7 @@ func TestTouchTask(t *testing.T) {
 		time.Sleep(time.Millisecond * 20)
 		m.taskProcessEventHandler.OnTaskSuccess(task)
 	})
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).AnyTimes()
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).AnyTimes()
 
 	defer setupTest(m)()
 }
@@ -180,9 +191,9 @@ func TestProcessMultipleTasks(t *testing.T) {
 	//First consumer task
 	deleteTask := &common.Task{Id: 13, Name: "ok", Payload: []byte("test")}
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
 		uint64(13), []byte("{\"Name\":\"ok\",\"Payload\":\"dGVzdA==\"}"), nil)
-	m.handler.EXPECT().Delete(uint64(13))
+	m.connectionH.EXPECT().Delete(uint64(13))
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(deleteTask)).Do(func(task *common.Task) {
 		m.taskProcessEventHandler.OnTaskSuccess(task)
@@ -191,10 +202,10 @@ func TestProcessMultipleTasks(t *testing.T) {
 	//Second consumer task
 	buryTask := &common.Task{Id: 14, Name: "error", Payload: []byte("test")}
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
 		uint64(14), []byte("{\"Name\":\"error\",\"Payload\":\"dGVzdA==\"}"), nil)
-	m.handler.EXPECT().Touch(uint64(14))
-	m.handler.EXPECT().Bury(uint64(14), m.BuryPriority)
+	m.connectionH.EXPECT().Touch(uint64(14))
+	m.connectionH.EXPECT().Bury(uint64(14), m.getBuryPriority())
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(buryTask)).Do(func(task *common.Task) {
 		m.taskProcessEventHandler.OnTaskHeartbeat(task)
@@ -206,15 +217,15 @@ func TestProcessMultipleTasks(t *testing.T) {
 	//Third consumer task
 	deleteTask = &common.Task{Id: 15, Name: "ok", Payload: []byte("test")}
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
 		uint64(15), []byte("{\"Name\":\"ok\",\"Payload\":\"dGVzdA==\"}"), nil)
-	m.handler.EXPECT().Delete(uint64(15))
+	m.connectionH.EXPECT().Delete(uint64(15))
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(deleteTask)).Do(func(task *common.Task) {
 		m.taskProcessEventHandler.OnTaskSuccess(task)
 	})
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).AnyTimes()
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).AnyTimes()
 
 	defer setupTest(m)()
 }
@@ -222,10 +233,10 @@ func TestProcessMultipleTasks(t *testing.T) {
 func TestProcessEmptyPayload(t *testing.T) {
 	m := newMock(t)
 
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).Return(
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
 		uint64(13), []byte("{\"Name\":\"laza\",\"Payload\":{}}"), nil)
-	m.handler.EXPECT().Bury(uint64(13), m.BuryPriority)
-	m.handler.EXPECT().Reserve(m.WaitForConsumerReserve).AnyTimes()
+	m.connectionH.EXPECT().Bury(uint64(13), m.getBuryPriority())
+	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).AnyTimes()
 
 	defer setupTest(m)()
 }

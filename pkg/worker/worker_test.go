@@ -1,4 +1,4 @@
-package worker
+package worker_test
 
 import (
 	"github.com/golang/mock/gomock"
@@ -7,6 +7,7 @@ import (
 	"github.com/mnikita/task-queue/pkg/connector"
 	"github.com/mnikita/task-queue/pkg/log"
 	"github.com/mnikita/task-queue/pkg/util"
+	"github.com/mnikita/task-queue/pkg/worker"
 	wmocks "github.com/mnikita/task-queue/pkg/worker/mocks"
 	"os"
 	"testing"
@@ -16,7 +17,6 @@ import (
 type Mock struct {
 	t *testing.T
 
-	*Configuration
 	common.TaskPayloadHandler
 
 	ctrl *gomock.Controller
@@ -24,6 +24,12 @@ type Mock struct {
 	workerEh      *wmocks.MockEventHandler
 	taskQueueEh   *cmocks.MockTaskQueueEventHandler
 	taskProcessEh *cmocks.MockTaskProcessEventHandler
+
+	wc *worker.Configuration
+	cc *connector.Configuration
+
+	worker    worker.Handler
+	connector connector.Handler
 }
 
 func TestMain(m *testing.M) {
@@ -43,8 +49,20 @@ func newMock(t *testing.T) *Mock {
 	m.taskQueueEh = cmocks.NewMockTaskQueueEventHandler(m.ctrl)
 	m.taskProcessEh = cmocks.NewMockTaskProcessEventHandler(m.ctrl)
 
-	m.Configuration = NewConfiguration()
-	m.WaitTaskThreadsToClose = time.Second * 2
+	m.wc = worker.NewConfiguration()
+	m.cc = connector.NewConfiguration()
+
+	m.connector = connector.NewConnector(m.cc)
+	m.worker = worker.NewWorker(m.wc, m.connector)
+
+	m.wc.WaitTaskThreadsToClose = time.Second * 2
+
+	m.connector.SetEventHandler(m.taskQueueEh)
+
+	m.worker.SetEventHandler(m.workerEh)
+	m.worker.SetTaskEventHandler(m.taskProcessEh)
+
+	m.TaskPayloadHandler = m.connector.(common.TaskPayloadHandler)
 
 	return m
 }
@@ -54,22 +72,17 @@ func setupTest(m *Mock) func() {
 		panic("Mock not initialized")
 	}
 
+	if err := m.worker.Init(); err != nil {
+		panic(err)
+	}
+	if err := m.connector.Init(); err != nil {
+		panic(err)
+	}
+
 	m.workerEh.EXPECT().OnStartWorker()
 	m.workerEh.EXPECT().OnEndWorker()
 
-	config := connector.NewConfiguration()
-	config.WaitToAcceptConsumerTask = m.Configuration.WaitToAcceptConsumerTask
-
-	conn := connector.NewConnector(config)
-	conn.SetEventHandler(m.taskQueueEh)
-
-	worker := NewWorker(m.Configuration, conn)
-	worker.SetEventHandler(m.workerEh)
-	worker.SetTaskEventHandler(m.taskProcessEh)
-
-	m.TaskPayloadHandler = conn
-
-	worker.StartWorker()
+	m.worker.StartWorker()
 
 	//wait for things to boot up
 	time.Sleep(time.Millisecond * 5)
@@ -79,7 +92,7 @@ func setupTest(m *Mock) func() {
 		defer m.ctrl.Finish()
 		defer util.AssertPanic(m.t)
 
-		worker.StopWorker()
+		m.worker.StopWorker()
 
 		//wait for threads to clean up
 		time.Sleep(time.Millisecond * 1)
@@ -134,8 +147,8 @@ func TestHandleMultipleTask(t *testing.T) {
 
 func TestHandlePayloadTimeout(t *testing.T) {
 	m := newMock(t)
-	m.Concurrency = 2
-	m.WaitToAcceptConsumerTask = time.Millisecond * 10
+	m.wc.Concurrency = 2
+	m.cc.WaitToAcceptConsumerTask = time.Millisecond * 10
 
 	defer setupTest(m)()
 
@@ -169,8 +182,8 @@ func TestHandlePayloadTimeout(t *testing.T) {
 
 func TestHeartbeat(t *testing.T) {
 	m := newMock(t)
-	m.Concurrency = 1
-	m.Heartbeat = time.Millisecond * 15
+	m.wc.Concurrency = 1
+	m.wc.Heartbeat = time.Millisecond * 15
 
 	defer setupTest(m)()
 

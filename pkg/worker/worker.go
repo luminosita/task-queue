@@ -1,4 +1,4 @@
-//go:generate mockgen -destination=./mocks/mock_worker.go -package=mocks . EventHandler
+//go:generate mockgen -destination=./mocks/mock_worker.go -package=mocks . Handler,EventHandler
 //Package workers provides primitives for configuration and starting worker queues
 package worker
 
@@ -20,13 +20,26 @@ type EventHandler interface {
 	OnThreadHeartbeat(threadId int)
 }
 
+type Handler interface {
+	Init() error
+	Close() error
+
+	TaskQueue() chan<- *common.Task
+	SetEventHandler(eventHandler EventHandler)
+	SetTaskEventHandler(eventHandler common.TaskProcessEventHandler)
+	StartWorker()
+	StopWorker()
+}
+
 //Worker stores configuration for server activation
 type Worker struct {
 	taskQueue     chan *common.Task
 	taskQueueQuit chan bool
 	quit          chan bool
 
-	config *Configuration
+	*Configuration
+
+	connectorHandler connector.Handler
 
 	taskEventHandler common.TaskProcessEventHandler
 	eventHandler     EventHandler
@@ -39,9 +52,6 @@ type Worker struct {
 type Configuration struct {
 	//Number of pre-initialized task thread
 	Concurrency int
-
-	//Waiting time to accept new consumer task for processing
-	WaitToAcceptConsumerTask time.Duration
 
 	//Waiting time for worker to wait task threads closing
 	WaitTaskThreadsToClose time.Duration
@@ -71,12 +81,13 @@ func (w *Worker) handle(wg *sync.WaitGroup) {
 			} else {
 				return
 			}
-		case <-time.After(w.config.Heartbeat):
+		case <-time.After(w.Heartbeat):
 			w.OnThreadHeartbeat(id)
 		}
 	}
 }
 
+//TODO: Needs to execute in separate thread with Context
 func (w *Worker) handleTask(threadId int, task *common.Task) {
 	taskHandler, err := common.GetRegisteredTaskHandler(task)
 
@@ -101,20 +112,20 @@ func (w *Worker) handleTask(threadId int, task *common.Task) {
 }
 
 func (w *Worker) startTaskThreads(waitGroup *sync.WaitGroup) {
-	for i := 0; i < w.config.Concurrency; i++ {
+	for i := 0; i < w.Concurrency; i++ {
 		waitGroup.Add(1)
 		go w.handle(waitGroup)
 	}
 }
 
 func (w *Worker) stopTaskThreads(waitGroup *sync.WaitGroup) {
-	log.Logger().TaskThreadsStopping(w.config.Concurrency)
+	log.Logger().TaskThreadsStopping(w.Concurrency)
 
-	for i := 0; i < w.config.Concurrency; i++ {
+	for i := 0; i < w.Concurrency; i++ {
 		w.taskQueueQuit <- true
 	}
 
-	err := util.WaitTimeout(waitGroup, w.config.WaitTaskThreadsToClose)
+	err := util.WaitTimeout(waitGroup, w.WaitTaskThreadsToClose)
 
 	if err != nil {
 		log.Logger().Error(err)
@@ -124,29 +135,43 @@ func (w *Worker) stopTaskThreads(waitGroup *sync.WaitGroup) {
 func NewConfiguration() *Configuration {
 	//make default configuration
 	return &Configuration{
-		Concurrency:              util.GetSystemConcurrency(),
-		Heartbeat:                time.Second * 5,
-		WaitToAcceptConsumerTask: time.Second * 30,
-		WaitTaskThreadsToClose:   time.Second * 30,
+		Concurrency:            util.GetSystemConcurrency(),
+		Heartbeat:              time.Second * 5,
+		WaitTaskThreadsToClose: time.Second * 30,
 	}
 }
 
 //NewWorker creates and configures Worker instance
-func NewWorker(config *Configuration, conn *connector.Connector) *Worker {
-	if util.IsNil(config) {
-		config = NewConfiguration()
-	}
+func NewWorker(config *Configuration, connectorHandler connector.Handler) *Worker {
+	w := &Worker{Configuration: config}
 
-	var quit = make(chan bool)
-	var taskQueueQuit = make(chan bool, config.Concurrency)
-	var taskQueue = make(chan *common.Task, config.Concurrency)
+	w.connectorHandler = connectorHandler
 
-	worker := &Worker{config: config, taskQueue: taskQueue, quit: quit,
-		taskQueueQuit: taskQueueQuit}
+	w.SetTaskEventHandler(connectorHandler.(common.TaskProcessEventHandler))
 
-	conn.SetTaskQueueChannel(taskQueue)
+	return w
+}
 
-	return worker
+func (w *Worker) Init() error {
+	//TODO: QuitChannel i TaskQueueQuit -> Context
+	w.quit = make(chan bool)
+	w.taskQueueQuit = make(chan bool, w.Concurrency)
+	w.taskQueue = make(chan *common.Task, w.Concurrency)
+
+	w.connectorHandler.SetTaskQueueChannel(w.taskQueue)
+
+	return nil
+}
+
+func (w *Worker) Close() error {
+	close(w.taskQueue)
+	close(w.quit)
+
+	return nil
+}
+
+func (w *Worker) TaskQueue() chan<- *common.Task {
+	return w.taskQueue
 }
 
 //SetEventHandler
@@ -186,11 +211,8 @@ func (w *Worker) StopWorker() {
 	//send stop signal to worker thread
 	w.quit <- true
 
-	close(w.taskQueue)
-
 	//wait for worker thread stop confirmation
 	<-w.quit
-	close(w.quit)
 }
 
 func (w *Worker) OnStartWorker() {
@@ -226,7 +248,7 @@ func (w *Worker) OnPostTask(task *common.Task, threadId int) {
 }
 
 func (w *Worker) OnThreadHeartbeat(threadId int) {
-	log.Logger().ThreadHeartbeat(threadId, w.config.Heartbeat)
+	log.Logger().ThreadHeartbeat(threadId, w.Heartbeat)
 
 	if !util.IsNil(w.eventHandler) {
 		w.eventHandler.OnThreadHeartbeat(threadId)

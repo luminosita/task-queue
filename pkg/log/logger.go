@@ -40,6 +40,7 @@ type MessageId int
 
 //errors
 var (
+	missingCliUrl             = Event{"Connection URL not specified"}
 	missingConsumerHandler    = Event{"ConsumerHandler not specified"}
 	missingTaskPayloadHandler = Event{"TaskPayloadHandler not specified"}
 	registeredTaskHandler     = Event{"RegisteredTaskHandler(%s): unknown task name"}
@@ -82,6 +83,7 @@ var (
 
 	consumerReserve = Event{"Reserve (timeout: %d seconds)"}
 	consumerRelease = Event{"Release (Id: %d, Priority: (%d), Delay: (%d seconds))"}
+	consumerPut     = Event{"Put (Priority: (%d), Delay: (%d seconds), Ttr: (%d seconds))"}
 	consumerBury    = Event{"Bury (Id: (%d), Priority: (%d))"}
 	consumerTouch   = Event{"Touch (Id: (%d))"}
 	consumerDelete  = Event{"Delete (Id: (%d))"}
@@ -93,7 +95,8 @@ var (
 	configWatchStop     = Event{"Configuration watch stopped"}
 	configWatchFile     = Event{"Configuration watch added file: %s"}
 
-	beanConfigLoaded          = Event{"Configuration loaded successfully: %s"}
+	containerConfigLoaded = Event{"Configuration loaded successfully: %s"}
+
 	beanUrl                   = Event{"URL configured: %s"}
 	beanConnectionEstablished = Event{"Connection successfully established. Listen on tubes %s"}
 
@@ -127,6 +130,11 @@ func Logger() *StandardLogger {
 //Error provides implementation of Error interface
 func (e *Error) Error() string {
 	return e.message
+}
+
+//Error message
+func MissingCliUrl() error {
+	return &Error{missingCliUrl.message}
 }
 
 //Error message
@@ -310,6 +318,11 @@ func (l *StandardLogger) ConsumerDelete(id uint64) {
 }
 
 //Log message
+func (l *StandardLogger) ConsumerPut(pri uint32, delay time.Duration, ttr time.Duration) {
+	l.Infof(consumerPut.message, pri, delay/time.Second, ttr/time.Second)
+}
+
+//Log message
 func (l *StandardLogger) ConsumerClose() {
 	l.Infof(consumerClose.message)
 }
@@ -340,8 +353,8 @@ func (l *StandardLogger) ConfigWatchFile(path string) {
 }
 
 //Log message
-func (l *StandardLogger) BeanConfigLoaded(path string) {
-	l.Infof(beanConfigLoaded.message, path)
+func (l *StandardLogger) ContainerConfigLoaded(path string) {
+	l.Infof(containerConfigLoaded.message, path)
 }
 
 //Log message

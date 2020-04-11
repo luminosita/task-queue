@@ -1,6 +1,7 @@
-package common
+package common_test
 
 import (
+	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
@@ -26,15 +27,15 @@ func setupTest(m *Mock) func() {
 	}
 }
 
-func HandleShortTest(_ *Task, _ TaskProcessEventHandler) error {
+func HandleShortTest(_ *common.Task, _ common.TaskProcessEventHandler) error {
 	return nil
 }
 
 func TestMain(m *testing.M) {
 	//	log.Logger().Level = logrus.TraceLevel
 
-	RegisterTask("short", func() TaskHandler {
-		return NewBaseTaskHandler(HandleShortTest)
+	common.RegisterTask("short", func() common.TaskHandler {
+		return common.NewBaseTaskHandler(HandleShortTest)
 	})
 
 	os.Exit(m.Run())
@@ -43,7 +44,7 @@ func TestMain(m *testing.M) {
 func TestGetRegisteredTaskHandler(t *testing.T) {
 	defer setupTest(newMock(t))()
 
-	taskHandler, err := GetRegisteredTaskHandler(&Task{Name: "short", Payload: []byte("{}")})
+	taskHandler, err := common.GetRegisteredTaskHandler(&common.Task{Name: "short", Payload: []byte("{}")})
 
 	assert.Nil(t, err)
 	assert.NotNil(t, taskHandler)
@@ -52,7 +53,7 @@ func TestGetRegisteredTaskHandler(t *testing.T) {
 func TestGetRegisterTasks(t *testing.T) {
 	defer setupTest(newMock(t))()
 
-	tasks := GetRegisteredTasks()
+	tasks := common.GetRegisteredTasks()
 
 	assert.Equal(t, []string{"short"}, tasks)
 }
