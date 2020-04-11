@@ -25,6 +25,8 @@ type Handler interface {
 	Init() error
 	Close() error
 
+	Config() *Configuration
+
 	Dialer() Dialer
 }
 
@@ -122,6 +124,10 @@ func (c *Connection) Init() (err error) {
 
 func (c *Connection) Close() error {
 	return c.ConnectionHandler.Close()
+}
+
+func (c *Connection) Config() *Configuration {
+	return c.Configuration
 }
 
 func (c *Connection) Dialer() Dialer {

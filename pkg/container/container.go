@@ -126,8 +126,6 @@ func NewConfiguration(workerConfig *worker.Configuration, consumerConfig *consum
 	return config
 }
 
-//TODO: Lazy load with singletons
-//TODO:(consumer and worker tests are not using all part of container). Waste of time to initialize everything
 func NewContainer(config *Configuration, connectionHandler connection.Handler,
 	connectorHandler connector.Handler, workerHandler worker.Handler,
 	consumerHandler consumer.Handler) *Container {

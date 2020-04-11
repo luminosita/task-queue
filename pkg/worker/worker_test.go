@@ -96,6 +96,13 @@ func setupTest(m *Mock) func() {
 
 		//wait for threads to clean up
 		time.Sleep(time.Millisecond * 1)
+
+		if err := m.worker.Close(); err != nil {
+			panic(err)
+		}
+		if err := m.connector.Close(); err != nil {
+			panic(err)
+		}
 	}
 }
 

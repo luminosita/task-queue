@@ -12,7 +12,9 @@ import (
 	wmocks "github.com/mnikita/task-queue/pkg/worker/mocks"
 	"github.com/stretchr/testify/assert"
 	"os"
+	"syscall"
 	"testing"
+	"time"
 )
 
 type Mock struct {
@@ -131,7 +133,17 @@ func TestStart(t *testing.T) {
 	m.handler.EXPECT().Worker().Return(worker)
 	m.handler.EXPECT().Consumer().Return(consumer)
 
-	err := m.cli.Start(false)
+	var ch chan os.Signal
 
-	assert.Nil(t, err)
+	go func() {
+		err := m.cli.Start(func(c chan os.Signal) {
+			ch = c
+		})
+
+		assert.Nil(t, err)
+	}()
+
+	time.Sleep(time.Millisecond * 100)
+	ch <- syscall.SIGINT
+	time.Sleep(time.Millisecond * 100)
 }

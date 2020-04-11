@@ -16,6 +16,8 @@ type Handler interface {
 	Init() error
 	Close() error
 
+	Config() *Configuration
+
 	SetTaskEventChannel(eventChannel chan<- *common.TaskProcessEvent)
 	SetTaskQueueChannel(taskQueueChannel chan<- *common.Task)
 	SetEventHandler(eventHandler common.TaskQueueEventHandler)
@@ -67,6 +69,10 @@ func (c *Connector) Init() error {
 
 func (c *Connector) Close() error {
 	return nil
+}
+
+func (c *Connector) Config() *Configuration {
+	return c.Configuration
 }
 
 func (c *Connector) SetTaskEventChannel(

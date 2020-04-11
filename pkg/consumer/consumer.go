@@ -256,10 +256,6 @@ func (con *Consumer) StopConsumer() {
 
 	//wait for worker thread stop confirmation
 	<-con.quitChannel
-
-	if err := con.Close(); err != nil {
-		log.Logger().Error(err)
-	}
 }
 
 func (con *Consumer) Reserve(timeout time.Duration) (id uint64, body []byte, err error) {

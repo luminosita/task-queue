@@ -14,11 +14,15 @@ import (
 	"time"
 )
 
+type OsSignalCallback func(chan os.Signal)
+
 type Handler interface {
 	Init() error
 	Close() error
 
-	Start(waitSignal bool) error
+	Container() container.Handler
+
+	Start(OsSignalCallback) error
 	Put(taskData []byte) error
 	PutFromFile() error
 	WriteDefaultConfiguration(writer io.Writer) (int, error)
@@ -74,6 +78,10 @@ func (cli *Cli) Close() error {
 	return cli.container.Close()
 }
 
+func (cli *Cli) Container() container.Handler {
+	return cli.container
+}
+
 func (cli *Cli) PutFromFile() (err error) {
 	taskData, err := ioutil.ReadFile(cli.TaskDataFile)
 
@@ -103,7 +111,7 @@ func (cli *Cli) Put(taskData []byte) (err error) {
 	return nil
 }
 
-func (cli *Cli) Start(waitSignal bool) (err error) {
+func (cli *Cli) Start(callback OsSignalCallback) (err error) {
 	w := cli.container.Worker()
 	c := cli.container.Consumer()
 
@@ -119,18 +127,20 @@ func (cli *Cli) Start(waitSignal bool) (err error) {
 	defer w.StopWorker()
 	defer c.StopConsumer()
 
-	if !waitSignal {
-		return
-	}
-
 	sigs := make(chan os.Signal, 1)
-	done := make(chan bool, 1)
-
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
+	if callback != nil {
+		callback(sigs)
+	}
+
+	done := make(chan bool, 1)
+
 	go func() {
-		<-sigs
-		done <- true
+		select {
+		case <-sigs:
+			done <- true
+		}
 	}()
 
 	<-done

@@ -28,6 +28,8 @@ type Handler interface {
 	Init() error
 	Close() error
 
+	Config() *Configuration
+
 	TaskQueue() chan<- *common.Task
 	SetEventHandler(eventHandler EventHandler)
 	SetTaskEventHandler(eventHandler common.TaskProcessEventHandler)
@@ -171,6 +173,10 @@ func (w *Worker) Close() error {
 	close(w.quit)
 
 	return nil
+}
+
+func (w *Worker) Config() *Configuration {
+	return w.Configuration
 }
 
 func (w *Worker) TaskQueue() chan<- *common.Task {

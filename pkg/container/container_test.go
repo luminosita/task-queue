@@ -81,5 +81,3 @@ func setupTest(m *Mock) func() {
 func TestStartContainer(t *testing.T) {
 	setupTest(newMock(t))
 }
-
-//TODO: Integration testing
