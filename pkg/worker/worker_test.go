@@ -1,6 +1,7 @@
 package worker_test
 
 import (
+	"encoding/json"
 	"github.com/golang/mock/gomock"
 	"github.com/mnikita/task-queue/pkg/common"
 	cmocks "github.com/mnikita/task-queue/pkg/common/mocks"
@@ -110,11 +111,11 @@ func TestStartServer(t *testing.T) {
 	defer setupTest(newMock(t))()
 }
 
-func TestHandleTaskWithMock(t *testing.T) {
+func TestHandleTask(t *testing.T) {
 	m := newMock(t)
 	defer setupTest(m)()
 
-	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short], Payload: []byte("{}")}
+	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short]}
 
 	m.workerEh.EXPECT().OnPreTask(shortTask)
 	m.workerEh.EXPECT().OnPostTask(shortTask)
@@ -130,8 +131,8 @@ func TestHandleMultipleTask(t *testing.T) {
 	m := newMock(t)
 	defer setupTest(m)()
 
-	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short], Payload: []byte("{}")}
-	longTask := &common.Task{Name: wmocks.Tasks[wmocks.Long], Payload: []byte("{}")}
+	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short]}
+	longTask := &common.Task{Name: wmocks.Tasks[wmocks.Long]}
 
 	m.workerEh.EXPECT().OnPreTask(shortTask).Times(5)
 	m.workerEh.EXPECT().OnPreTask(longTask).Times(5)
@@ -159,8 +160,8 @@ func TestHandlePayloadTimeout(t *testing.T) {
 
 	defer setupTest(m)()
 
-	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short], Payload: []byte("{}")}
-	longTask := &common.Task{Name: wmocks.Tasks[wmocks.Long], Payload: []byte("{}")}
+	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short]}
+	longTask := &common.Task{Name: wmocks.Tasks[wmocks.Long]}
 
 	m.workerEh.EXPECT().OnPreTask(longTask).Times(2)
 	m.workerEh.EXPECT().OnPreTask(shortTask).Times(2)
@@ -194,7 +195,7 @@ func TestHeartbeat(t *testing.T) {
 
 	defer setupTest(m)()
 
-	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short], Payload: []byte("{}")}
+	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short]}
 
 	m.workerEh.EXPECT().OnPreTask(shortTask).Times(2)
 	m.workerEh.EXPECT().OnPostTask(shortTask).Times(2)
@@ -220,9 +221,9 @@ func TestTaskThreadError(t *testing.T) {
 
 	defer setupTest(m)()
 
-	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short], Payload: []byte("{}")}
-	longTask := &common.Task{Name: wmocks.Tasks[wmocks.Long], Payload: []byte("{}")}
-	errorTask := &common.Task{Name: wmocks.Tasks[wmocks.Error], Payload: []byte("{}")}
+	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Short]}
+	longTask := &common.Task{Name: wmocks.Tasks[wmocks.Long]}
+	errorTask := &common.Task{Name: wmocks.Tasks[wmocks.Error]}
 
 	m.workerEh.EXPECT().OnPreTask(shortTask).Times(1)
 	m.workerEh.EXPECT().OnPreTask(longTask).Times(1)
@@ -251,7 +252,7 @@ func TestGetUnregisteredTask(t *testing.T) {
 
 	defer setupTest(m)()
 
-	unknownTask := &common.Task{Name: "unknown", Payload: []byte("{}")}
+	unknownTask := &common.Task{Name: "unknown"}
 
 	m.taskQueueEh.EXPECT().OnTaskQueued(unknownTask)
 
@@ -265,7 +266,7 @@ func TestTaskResult(t *testing.T) {
 	m := newMock(t)
 	defer setupTest(m)()
 
-	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.ShortResult], Payload: []byte("{}")}
+	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.ShortResult]}
 
 	m.workerEh.EXPECT().OnPreTask(shortTask)
 	m.workerEh.EXPECT().OnPostTask(shortTask)
@@ -273,7 +274,8 @@ func TestTaskResult(t *testing.T) {
 	m.taskQueueEh.EXPECT().OnTaskQueued(shortTask)
 
 	m.taskProcessEh.EXPECT().OnTaskSuccess(shortTask)
-	m.taskProcessEh.EXPECT().OnTaskResult(shortTask, gomock.Eq([]interface{}{wmocks.ShortTaskResult}))
+	m.taskProcessEh.EXPECT().OnTaskResult(shortTask,
+		gomock.Eq([]interface{}{wmocks.ShortTaskResult}))
 
 	m.HandlePayload(shortTask)
 }
@@ -282,7 +284,7 @@ func TestTaskHeartbeat(t *testing.T) {
 	m := newMock(t)
 	defer setupTest(m)()
 
-	heartbeatTask := &common.Task{Name: wmocks.Tasks[wmocks.Heartbeat], Payload: []byte("{}")}
+	heartbeatTask := &common.Task{Name: wmocks.Tasks[wmocks.Heartbeat]}
 
 	m.workerEh.EXPECT().OnPreTask(heartbeatTask)
 	m.workerEh.EXPECT().OnPostTask(heartbeatTask)
@@ -293,4 +295,21 @@ func TestTaskHeartbeat(t *testing.T) {
 	m.taskProcessEh.EXPECT().OnTaskHeartbeat(heartbeatTask)
 
 	m.HandlePayload(heartbeatTask)
+}
+
+func TestHandleTaskWithPayload(t *testing.T) {
+	m := newMock(t)
+	defer setupTest(m)()
+
+	shortTask := &common.Task{Name: wmocks.Tasks[wmocks.Payload],
+		Payload: json.RawMessage(`{"mika": 1, "pera": 3, "laza":"test"}`)}
+
+	m.workerEh.EXPECT().OnPreTask(shortTask)
+	m.workerEh.EXPECT().OnPostTask(shortTask)
+
+	m.taskQueueEh.EXPECT().OnTaskQueued(shortTask)
+
+	m.taskProcessEh.EXPECT().OnTaskSuccess(shortTask)
+
+	m.HandlePayload(shortTask)
 }

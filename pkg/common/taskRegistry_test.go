@@ -27,7 +27,7 @@ func setupTest(m *Mock) func() {
 	}
 }
 
-func HandleShortTest(_ *common.Task, _ common.TaskProcessEventHandler) error {
+func HandleShortTest(_ interface{}, _ *common.Task, _ common.TaskProcessEventHandler) error {
 	return nil
 }
 

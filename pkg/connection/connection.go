@@ -40,12 +40,14 @@ type Channels interface {
 }
 
 type Channel interface {
+	Name() string
+
 	Put(body []byte, pri uint32, delay, ttr time.Duration) (id uint64, err error)
 }
 
 type Connection struct {
-	Channels
-	Channel
+	channels Channels
+	channel  Channel
 	consumer.ConnectionHandler
 
 	dialer Dialer
@@ -82,9 +84,9 @@ func (c *Connection) establishConnection() error {
 
 	if c.Tubes != nil && len(c.Tubes) > 0 {
 		if len(c.Tubes) > 1 {
-			c.Channels = c.dialer.CreateChannels()
+			c.channels = c.dialer.CreateChannels()
 		} else {
-			c.Channel = c.dialer.CreateChannel()
+			c.channel = c.dialer.CreateChannel()
 		}
 	}
 
@@ -134,17 +136,33 @@ func (c *Connection) Dialer() Dialer {
 }
 
 func (c *Connection) Reserve(timeout time.Duration) (id uint64, body []byte, err error) {
-	if util.IsNil(c.Channels) {
+	if util.IsNil(c.channels) {
 		return c.ConnectionHandler.Reserve(timeout)
 	}
 
-	return c.Channels.Reserve(timeout)
+	return c.channels.Reserve(timeout)
+}
+
+func (c *Connection) Delete(id uint64) (err error) {
+	log.Logger().ConsumerDelete(id)
+
+	return c.ConnectionHandler.Delete(id)
 }
 
 func (c *Connection) Put(body []byte, pri uint32, delay, ttr time.Duration) (id uint64, err error) {
-	if util.IsNil(c.Channel) {
+	if util.IsNil(c.channel) {
 		return 0, log.MissingChannel()
 	}
 
-	return c.Channel.Put(body, pri, delay, ttr)
+	log.Logger().ConsumerPut(c.channel.Name(), pri, delay, ttr)
+
+	return c.channel.Put(body, pri, delay, ttr)
+}
+
+func (c *Connection) DefaultTube() (string, error) {
+	if util.IsNil(c.channel) {
+		return "", log.MissingChannel()
+	}
+
+	return c.channel.Name(), nil
 }

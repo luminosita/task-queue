@@ -84,7 +84,7 @@ var (
 
 	consumerReserve = Event{"Reserve (timeout: %d seconds)"}
 	consumerRelease = Event{"Release (Id: %d, Priority: (%d), Delay: (%d seconds))"}
-	consumerPut     = Event{"Put (Priority: (%d), Delay: (%d seconds), Ttr: (%d seconds))"}
+	consumerPut     = Event{"Put (Priority: (%d), Delay: (%d seconds), Ttr: (%d seconds)) on tube %s"}
 	consumerBury    = Event{"Bury (Id: (%d), Priority: (%d))"}
 	consumerTouch   = Event{"Touch (Id: (%d))"}
 	consumerDelete  = Event{"Delete (Id: (%d))"}
@@ -324,8 +324,8 @@ func (l *StandardLogger) ConsumerDelete(id uint64) {
 }
 
 //Log message
-func (l *StandardLogger) ConsumerPut(pri uint32, delay time.Duration, ttr time.Duration) {
-	l.Infof(consumerPut.message, pri, delay/time.Second, ttr/time.Second)
+func (l *StandardLogger) ConsumerPut(tube string, pri uint32, delay time.Duration, ttr time.Duration) {
+	l.Infof(consumerPut.message, pri, delay/time.Second, ttr/time.Second, tube)
 }
 
 //Log message

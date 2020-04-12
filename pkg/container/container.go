@@ -139,9 +139,6 @@ func NewContainer(config *Configuration, connectionHandler connection.Handler,
 	c.worker = workerHandler
 	c.consumer = consumerHandler
 
-	//.NewConsumer(c.ConsumerConfig,
-	//	c.connector, c.connection.(consumer.ConnectionHandler))
-
 	return c
 }
 
@@ -206,7 +203,7 @@ func (c *Container) Consumer() consumer.Handler {
 }
 
 func (c *Container) ConnectionHandler() consumer.ConnectionHandler {
-	return c.consumer.(consumer.ConnectionHandler)
+	return c.connection.(consumer.ConnectionHandler)
 }
 
 func (c *Container) Connector() connector.Handler {

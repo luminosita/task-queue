@@ -79,14 +79,15 @@ func setupTest(m *Mock) func() {
 func TestMain(m *testing.M) {
 	//	log.Logger().Level = logrus.TraceLevel
 
+	wmocks.RegisterTasks()
+
 	os.Exit(m.Run())
 }
 
 func TestPut(t *testing.T) {
-	var config = &cli.Configuration{
-		Tubes: []string{"default"},
-		Url:   "mock",
-	}
+	var config = cli.NewConfiguration()
+	config.Tubes = []string{"default"}
+	config.Url = "mock"
 
 	m := newMock(t, config)
 	defer setupTest(m)()
@@ -96,9 +97,28 @@ func TestPut(t *testing.T) {
 	bytes := []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}")
 
 	m.handler.EXPECT().ConnectionHandler().Return(ch)
-	ch.EXPECT().Put(gomock.Eq(bytes), gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(0), nil)
+	ch.EXPECT().Put(gomock.Eq(bytes), gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(1), nil)
 
-	err := m.cli.Put(bytes)
+	id, err := m.cli.Put(bytes)
+
+	assert.Equal(t, 1, id)
+	assert.Nil(t, err)
+}
+
+func TestDelete(t *testing.T) {
+	var config = cli.NewConfiguration()
+	config.Tubes = []string{"default"}
+	config.Url = "mock"
+
+	m := newMock(t, config)
+	defer setupTest(m)()
+
+	ch := cmocks.NewMockConnectionHandler(m.ctrl)
+
+	m.handler.EXPECT().ConnectionHandler().Return(ch)
+	ch.EXPECT().Delete(uint64(1))
+
+	err := m.cli.Delete(uint64(1))
 
 	assert.Nil(t, err)
 }
@@ -120,10 +140,9 @@ func TestWriteDefaultConfiguration(t *testing.T) {
 }
 
 func TestStart(t *testing.T) {
-	var config = &cli.Configuration{
-		Tubes: []string{"default"},
-		Url:   "mock",
-	}
+	var config = cli.NewConfiguration()
+	config.Tubes = []string{"default"}
+	config.Url = "mock"
 
 	m := newMock(t, config)
 	defer setupTest(m)()

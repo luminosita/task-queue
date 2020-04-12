@@ -169,11 +169,11 @@ func (con *Consumer) handleConsume() {
 
 func NewConfiguration() *Configuration {
 	return &Configuration{
-		WaitForConsumerReserve: time.Second * 5,
+		WaitForConsumerReserve: time.Second * 1,
 		Heartbeat:              time.Second * 5,
 		ReleaseDelay:           time.Second * 5,
-		ReleasePriority:        1,
-		BuryPriority:           1,
+		ReleasePriority:        1024,
+		BuryPriority:           1024,
 	}
 }
 
@@ -306,16 +306,6 @@ func (con *Consumer) Touch(id uint64) error {
 	}
 
 	return nil
-}
-
-func (con *Consumer) Put(body []byte, pri uint32, delay, ttr time.Duration) (id uint64, err error) {
-	log.Logger().ConsumerPut(pri, delay, ttr)
-
-	if !util.IsNil(con.connectionHandler) {
-		return con.connectionHandler.Put(body, pri, delay, ttr)
-	}
-
-	return 0, nil
 }
 
 func (con *Consumer) ListTubes() ([]string, error) {

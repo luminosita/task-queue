@@ -3,6 +3,7 @@
 package common
 
 import (
+	"encoding/json"
 	"github.com/mnikita/task-queue/pkg/log"
 )
 
@@ -18,6 +19,7 @@ type TaskHandler interface {
 	SetTaskProcessEventHandler(eventHandler TaskProcessEventHandler)
 	SetTask(task *Task)
 	Handle() error
+	Payload() interface{}
 }
 
 //TaskPayloadHandler handles consumer task payload.
@@ -53,13 +55,13 @@ type TaskProcessEvent struct {
 
 //Task struct contains task requests data
 type Task struct {
-	Id      uint64
-	Name    string
-	Payload []byte
+	Id      uint64          `json:"-"`
+	Name    string          `json:"name"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 //TaskHandlerFunc is helper class for creating short task implementation containing one processing function
-type TaskHandlerFunc func(task *Task, eventHandler TaskProcessEventHandler) error
+type TaskHandlerFunc func(interface{}, *Task, TaskProcessEventHandler) error
 
 //BaseTaskHandler is base primitive for final tasks implementations.
 //It is a default implementation of TaskHandler interface
@@ -67,6 +69,12 @@ type BaseTaskHandler struct {
 	eventHandler TaskProcessEventHandler `json:"-"`
 	task         *Task                   `json:"-"`
 	handler      TaskHandlerFunc         `json:"-"`
+
+	payload interface{}
+}
+
+func (b *BaseTaskHandler) Payload() interface{} {
+	return b.payload
 }
 
 //TaskThreadError is default error thrown during task processing
@@ -82,6 +90,10 @@ func NewBaseTaskHandler(handler TaskHandlerFunc) *BaseTaskHandler {
 	return &BaseTaskHandler{handler: handler}
 }
 
+func NewBaseTaskHandlerWithPayload(handler TaskHandlerFunc, payload interface{}) *BaseTaskHandler {
+	return &BaseTaskHandler{handler: handler, payload: payload}
+}
+
 func (b *BaseTaskHandler) SetTask(task *Task) {
 	b.task = task
 }
@@ -91,7 +103,7 @@ func (b *BaseTaskHandler) SetTaskProcessEventHandler(eventHandler TaskProcessEve
 }
 
 func (b *BaseTaskHandler) Handle() error {
-	return b.handler(b.task, b.eventHandler)
+	return b.handler(b.payload, b.task, b.eventHandler)
 }
 
 func NewTaskThreadError(task *Task, err error) *TaskThreadError {

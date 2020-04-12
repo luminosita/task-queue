@@ -43,13 +43,17 @@ func GetRegisteredTaskHandler(task *Task) (TaskHandler, error) {
 
 	taskHandler := constructor()
 
-	err := json.Unmarshal(task.Payload, taskHandler)
+	payload := taskHandler.Payload()
 
-	if err != nil {
-		return nil, log.InvalidTaskPayloadError(task.Id, task.Name, err)
+	if payload != nil {
+		err := json.Unmarshal(task.Payload, payload)
+
+		if err != nil {
+			return nil, log.InvalidTaskPayloadError(task.Id, task.Name, err)
+		}
 	}
 
-	return taskHandler, err
+	return taskHandler, nil
 }
 
 //GetRegisteredTasks returns slice with all task names registered

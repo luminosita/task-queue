@@ -115,10 +115,10 @@ func (m *Mock) getBuryPriority() uint32 {
 func TestProcessOneTask(t *testing.T) {
 	m := newMock(t)
 
-	reserveTask := &common.Task{Id: 13, Name: "add", Payload: []byte("test")}
+	reserveTask := &common.Task{Id: 13, Name: "add"}
 
 	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
-		uint64(13), []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"), nil)
+		uint64(13), []byte(`{"name": "add"}`), nil)
 	m.connectionH.EXPECT().Delete(uint64(13))
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(reserveTask)).Do(func(task *common.Task) {
@@ -134,7 +134,9 @@ func TestHeartbeat(t *testing.T) {
 	//setting quit signal timeout slightly shorter than final Sleep time
 	m.cc.Heartbeat = time.Millisecond * 50
 
-	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(uint64(0), nil, nil).AnyTimes()
+	m.connectionH.EXPECT().Reserve(
+		m.getWaitForConsumerReserve()).Return(uint64(0), nil, nil).AnyTimes()
+
 	m.consumerEh.EXPECT().OnHeartbeat()
 
 	defer setupTest(m)()
@@ -146,7 +148,9 @@ func TestHeartbeat(t *testing.T) {
 func TestReserveTimeout(t *testing.T) {
 	m := newMock(t)
 
-	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(uint64(13), nil, consumer.ErrTimeout)
+	m.connectionH.EXPECT().Reserve(
+		m.getWaitForConsumerReserve()).Return(uint64(13), nil, consumer.ErrTimeout)
+
 	m.consumerEh.EXPECT().OnReserveTimeout()
 
 	defer setupTest(m)()
@@ -155,12 +159,12 @@ func TestReserveTimeout(t *testing.T) {
 func TestBuryTask(t *testing.T) {
 	m := newMock(t)
 
-	buryTask := &common.Task{Id: 13, Name: "add", Payload: []byte("test")}
+	buryTask := &common.Task{Id: 13, Name: "add"}
 	threadError := &common.TaskThreadError{Task: buryTask,
 		Err: errors.New("test error")}
 
 	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
-		uint64(13), []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"), nil)
+		uint64(13), []byte(`{"name": "add"}`), nil)
 	m.connectionH.EXPECT().Bury(uint64(13), m.getBuryPriority())
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(buryTask)).Do(func(task *common.Task) {
@@ -174,10 +178,10 @@ func TestBuryTask(t *testing.T) {
 func TestTouchTask(t *testing.T) {
 	m := newMock(t)
 
-	deleteTask := &common.Task{Id: 13, Name: "add", Payload: []byte("test")}
+	deleteTask := &common.Task{Id: 13, Name: "add"}
 
 	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
-		uint64(13), []byte("{\"Name\":\"add\",\"Payload\":\"dGVzdA==\"}"), nil)
+		uint64(13), []byte(`{"name": "add"}`), nil)
 	m.connectionH.EXPECT().Touch(uint64(13))
 	m.connectionH.EXPECT().Delete(uint64(13))
 	m.taskPlh.EXPECT().HandlePayload(
@@ -196,10 +200,10 @@ func TestProcessMultipleTasks(t *testing.T) {
 	m := newMock(t)
 
 	//First consumer task
-	deleteTask := &common.Task{Id: 13, Name: "ok", Payload: []byte("test")}
+	deleteTask := &common.Task{Id: 13, Name: "ok"}
 
 	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
-		uint64(13), []byte("{\"Name\":\"ok\",\"Payload\":\"dGVzdA==\"}"), nil)
+		uint64(13), []byte(`{"name": "ok"}`), nil)
 	m.connectionH.EXPECT().Delete(uint64(13))
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(deleteTask)).Do(func(task *common.Task) {
@@ -207,10 +211,10 @@ func TestProcessMultipleTasks(t *testing.T) {
 	})
 
 	//Second consumer task
-	buryTask := &common.Task{Id: 14, Name: "error", Payload: []byte("test")}
+	buryTask := &common.Task{Id: 14, Name: "error"}
 
 	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
-		uint64(14), []byte("{\"Name\":\"error\",\"Payload\":\"dGVzdA==\"}"), nil)
+		uint64(14), []byte(`{"name": "error"}`), nil)
 	m.connectionH.EXPECT().Touch(uint64(14))
 	m.connectionH.EXPECT().Bury(uint64(14), m.getBuryPriority())
 	m.taskPlh.EXPECT().HandlePayload(
@@ -222,10 +226,10 @@ func TestProcessMultipleTasks(t *testing.T) {
 	})
 
 	//Third consumer task
-	deleteTask = &common.Task{Id: 15, Name: "ok", Payload: []byte("test")}
+	deleteTask = &common.Task{Id: 15, Name: "ok"}
 
 	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
-		uint64(15), []byte("{\"Name\":\"ok\",\"Payload\":\"dGVzdA==\"}"), nil)
+		uint64(15), []byte(`{"name": "ok"}`), nil)
 	m.connectionH.EXPECT().Delete(uint64(15))
 	m.taskPlh.EXPECT().HandlePayload(
 		gomock.Eq(deleteTask)).Do(func(task *common.Task) {
@@ -240,8 +244,10 @@ func TestProcessMultipleTasks(t *testing.T) {
 func TestProcessEmptyPayload(t *testing.T) {
 	m := newMock(t)
 
+	//Invalid Json
 	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).Return(
-		uint64(13), []byte("{\"Name\":\"laza\",\"Payload\":{}}"), nil)
+		uint64(13), []byte(`{"name": "add", "payload":}`), nil)
+
 	m.connectionH.EXPECT().Bury(uint64(13), m.getBuryPriority())
 	m.connectionH.EXPECT().Reserve(m.getWaitForConsumerReserve()).AnyTimes()
 

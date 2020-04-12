@@ -188,14 +188,15 @@ func TestPutTube(t *testing.T) {
 	m := newMock(t)
 
 	m.bc.Url = "tcp://127.0.0.1:11300"
-	m.bc.Tubes = []string{"mika"}
+	m.bc.Tubes = []string{"default"}
 
 	ch := mocks.NewMockChannel(m.ctrl)
+	ch.EXPECT().Name().Return("default")
 	ch.EXPECT().Put([]byte{}, uint32(1), time.Second, time.Second)
 
 	m.dialer.EXPECT().Dial(gomock.Eq("127.0.0.1:11300"), gomock.Eq(m.bc.Tubes)).Return(m.conn, nil)
 	m.dialer.EXPECT().CreateChannel().Return(ch)
-	m.conn.EXPECT().ListTubes().Return([]string{"mika"}, nil)
+	m.conn.EXPECT().ListTubes().Return([]string{"default"}, nil)
 
 	m.conn.EXPECT().Close()
 

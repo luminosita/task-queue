@@ -24,11 +24,12 @@ type Handler interface {
 	Init() error
 	Close() error
 
-	Container() container.Handler
+	//Container() container.Handler
 
 	Start(OsSignalCallback) error
-	Put(taskData []byte) error
-	PutFromFile() error
+	Put(taskData []byte) (uint64, error)
+	Delete(uint64) error
+	PutFromFile() (uint64, error)
 	WriteDefaultConfiguration(writer io.Writer) (int, error)
 	WriteDefaultConfigurationToFile(file string) (int, error)
 }
@@ -38,6 +39,10 @@ type Configuration struct {
 	Url          string
 	ConfigFile   string
 	TaskDataFile string
+
+	PutPriority uint32
+	PutDelay    time.Duration
+	PutTtr      time.Duration
 }
 
 type Cli struct {
@@ -52,6 +57,14 @@ func validateConfig(config *Configuration) (err error) {
 	}
 
 	return err
+}
+
+func NewConfiguration() *Configuration {
+	return &Configuration{
+		PutPriority: 1024,
+		PutDelay:    0,
+		PutTtr:      time.Second * 10,
+	}
 }
 
 func NewCli(config *Configuration, handler container.Handler) *Cli {
@@ -73,7 +86,7 @@ func (cli *Cli) Init() (err error) {
 		return err
 	}
 
-	config := cli.Container().Connection().Config()
+	config := cli.container.Connection().Config()
 
 	config.Url = cli.Url
 	config.Tubes = cli.Tubes
@@ -95,33 +108,39 @@ func (cli *Cli) Container() container.Handler {
 	return cli.container
 }
 
-func (cli *Cli) PutFromFile() (err error) {
+func (cli *Cli) PutFromFile() (id uint64, err error) {
 	taskData, err := ioutil.ReadFile(cli.TaskDataFile)
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	return cli.Put(taskData)
 }
 
-func (cli *Cli) Put(taskData []byte) (err error) {
+func (cli *Cli) Put(taskData []byte) (id uint64, err error) {
 	//test data before sending to Beanstalkd
 	err = json.Unmarshal(taskData, &common.Task{})
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	ch := cli.container.ConnectionHandler()
 
-	_, err = ch.Put(taskData, uint32(1), 0, time.Minute)
+	id, err = ch.Put(taskData, cli.PutPriority, cli.PutDelay, cli.PutTtr)
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	return nil
+	return id, nil
+}
+
+func (cli *Cli) Delete(id uint64) error {
+	ch := cli.container.ConnectionHandler()
+
+	return ch.Delete(id)
 }
 
 func (cli *Cli) Start(callback OsSignalCallback) (err error) {
@@ -134,11 +153,6 @@ func (cli *Cli) Start(callback OsSignalCallback) (err error) {
 	if err != nil {
 		return err
 	}
-
-	//we want to stop consumer first, before worker
-	//defer works FILO
-	defer w.StopWorker()
-	defer c.StopConsumer()
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -157,6 +171,11 @@ func (cli *Cli) Start(callback OsSignalCallback) (err error) {
 	}()
 
 	<-done
+
+	c.StopConsumer()
+	w.StopWorker()
+
+	//TODO: wait for tasks to finish or timeout
 
 	return nil
 }

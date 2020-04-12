@@ -3,6 +3,7 @@ package mocks
 import (
 	"errors"
 	"github.com/mnikita/task-queue/pkg/common"
+	"github.com/mnikita/task-queue/pkg/log"
 	"time"
 )
 
@@ -12,20 +13,28 @@ const (
 	Long
 	Error
 	Heartbeat
+	Payload
 )
 
-var Tasks = []string{"Short", "ShortResult", "Long", "Error", "Heartbeat"}
+var Tasks = []string{"Short", "ShortResult", "Long", "Error", "Heartbeat", "Payload"}
 
 var ErrorTaskErr = errors.New("ErrorTask test error")
 
 var ShortTaskResult = "ShortTaskResult"
 
-func HandleShortTest(_ *common.Task, _ common.TaskProcessEventHandler) error {
+type TestPayload struct {
+	Mika int    `json:"mika"`
+	Pera int    `json:"pera"`
+	Laza string `json:"laza"`
+}
+
+func HandleShortTest(_ interface{}, _ *common.Task, _ common.TaskProcessEventHandler) error {
 	time.Sleep(time.Millisecond * 20)
 	return nil
 }
 
-func HandleShortTestWithResult(task *common.Task, handler common.TaskProcessEventHandler) error {
+func HandleShortTestWithResult(_ interface{}, task *common.Task,
+	handler common.TaskProcessEventHandler) error {
 	time.Sleep(time.Millisecond * 20)
 
 	handler.OnTaskResult(task, ShortTaskResult)
@@ -33,13 +42,13 @@ func HandleShortTestWithResult(task *common.Task, handler common.TaskProcessEven
 	return nil
 }
 
-func HandleLongTask(_ *common.Task, _ common.TaskProcessEventHandler) error {
+func HandleLongTask(_ interface{}, _ *common.Task, _ common.TaskProcessEventHandler) error {
 	time.Sleep(time.Millisecond * 500)
 
 	return nil
 }
 
-func HandleHeartbeatTask(task *common.Task, eventHandler common.TaskProcessEventHandler) error {
+func HandleHeartbeatTask(_ interface{}, task *common.Task, eventHandler common.TaskProcessEventHandler) error {
 	time.Sleep(time.Millisecond * 100)
 
 	eventHandler.OnTaskHeartbeat(task)
@@ -49,10 +58,18 @@ func HandleHeartbeatTask(task *common.Task, eventHandler common.TaskProcessEvent
 	return nil
 }
 
-func HandleErrorTask(_ *common.Task, _ common.TaskProcessEventHandler) error {
+func HandleErrorTask(_ interface{}, _ *common.Task, _ common.TaskProcessEventHandler) error {
 	time.Sleep(time.Millisecond * 10)
 
 	return ErrorTaskErr
+}
+
+func HandlePayloadTask(payload interface{}, _ *common.Task, _ common.TaskProcessEventHandler) error {
+	time.Sleep(time.Millisecond * 20)
+
+	log.Logger().Infof("Task with Payload %+v", payload)
+
+	return nil
 }
 
 func RegisterTasks() {
@@ -74,5 +91,11 @@ func RegisterTasks() {
 
 	common.RegisterTask(Tasks[Heartbeat], func() common.TaskHandler {
 		return common.NewBaseTaskHandler(HandleHeartbeatTask)
+	})
+
+	common.RegisterTask(Tasks[Payload], func() common.TaskHandler {
+		payload := new(TestPayload)
+
+		return common.NewBaseTaskHandlerWithPayload(HandlePayloadTask, payload)
 	})
 }
