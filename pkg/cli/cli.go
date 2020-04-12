@@ -6,6 +6,7 @@ import (
 	"github.com/mnikita/task-queue/pkg/common"
 	"github.com/mnikita/task-queue/pkg/container"
 	"github.com/mnikita/task-queue/pkg/log"
+	"github.com/mnikita/task-queue/pkg/util"
 	"io"
 	"io/ioutil"
 	"os"
@@ -13,6 +14,9 @@ import (
 	"syscall"
 	"time"
 )
+
+const EnvUrl = "BEANSTALKD_URL"
+const EnvTubes = "BEANSTALKD_TUBES"
 
 type OsSignalCallback func(chan os.Signal)
 
@@ -59,11 +63,20 @@ func NewCli(config *Configuration, handler container.Handler) *Cli {
 }
 
 func (cli *Cli) Init() (err error) {
+	//need to check ENV if we test Cli using mock Env
+	cli.Url = util.CheckEnvForValue(EnvUrl, cli.Url)
+	cli.Tubes = util.CheckEnvForArray(EnvTubes, cli.Tubes)
+
 	err = validateConfig(cli.Configuration)
 
 	if err != nil {
 		return err
 	}
+
+	config := cli.Container().Connection().Config()
+
+	config.Url = cli.Url
+	config.Tubes = cli.Tubes
 
 	err = cli.container.Init(cli.ConfigFile)
 

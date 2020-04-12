@@ -108,7 +108,6 @@ func NewConnection(config *Configuration, dialer Dialer) *Connection {
 }
 
 func NewConfiguration() *Configuration {
-	//make default configuration
 	return &Configuration{}
 }
 

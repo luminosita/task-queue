@@ -12,6 +12,7 @@ var WireSet = wire.NewSet(NewDialer, NewConfiguration)
 const NetworkTcp = "tcp"
 
 type Configuration struct {
+	Addr  string
 	Tubes []string
 }
 
@@ -30,6 +31,8 @@ func NewDialer(config *Configuration) connection.Dialer {
 }
 
 func (b *BeanstakldDialer) Dial(addr string, tubes []string) (consumer.ConnectionHandler, error) {
+	//check for ENV
+	b.Addr = addr
 	b.Tubes = tubes
 
 	return gob.DialTimeout(NetworkTcp, addr, gob.DefaultDialTimeout)

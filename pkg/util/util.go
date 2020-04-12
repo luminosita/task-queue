@@ -3,8 +3,10 @@ package util
 import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/mnikita/task-queue/pkg/log"
+	"os"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -48,6 +50,30 @@ func IsNil(i interface{}) bool {
 		return reflect.ValueOf(i).IsNil()
 	}
 	return false
+}
+
+func CheckEnvForValue(name string, v string) string {
+	if v == "" {
+		v, _ = os.LookupEnv(name)
+	}
+
+	return v
+}
+
+func CheckEnvForArray(name string, a []string) []string {
+	if a == nil || len(a) == 0 {
+		t, ok := os.LookupEnv(name)
+
+		if ok && t != "" {
+			a = strings.Split(t, ",")
+
+			for i := range a {
+				a[i] = strings.TrimSpace(a[i])
+			}
+		}
+	}
+
+	return a
 }
 
 func NewConfigWatcher(eventHandler ConfigWatcherEventHandler) (c *ConfigWatcher, err error) {

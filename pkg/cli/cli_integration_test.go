@@ -29,9 +29,6 @@ func setupTest(m *Mock, config *Configuration) func() {
 
 	m.cli = InitializeCli(config)
 
-	m.cli.Container().Connection().Config().Url = config.Url
-	m.cli.Container().Connection().Config().Tubes = config.Tubes
-
 	assert.Nil(m.t, m.cli.Init())
 
 	// Test teardown - return a closure for use by 'defer'
@@ -47,10 +44,11 @@ func TestContainerStart(t *testing.T) {
 		t.Skip("skipping test in short mode.")
 	}
 
-	//TODO: Replace with ENV param
-	config := &Configuration{
-		Url: "tcp://localhost:11300",
+	if err := os.Setenv(EnvUrl, "tcp://127.0.0.1:11300"); err != nil {
+		panic(err)
 	}
+
+	config := &Configuration{}
 
 	m := newMock(t)
 	setupTest(m, config)

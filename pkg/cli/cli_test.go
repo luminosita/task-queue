@@ -5,6 +5,8 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/mnikita/task-queue/pkg/cli"
 	"github.com/mnikita/task-queue/pkg/cli/mocks"
+	"github.com/mnikita/task-queue/pkg/connection"
+	ccmocks "github.com/mnikita/task-queue/pkg/connection/mocks"
 	cmocks "github.com/mnikita/task-queue/pkg/consumer/mocks"
 	"github.com/mnikita/task-queue/pkg/container"
 	lmocks "github.com/mnikita/task-queue/pkg/container/mocks"
@@ -22,7 +24,8 @@ type Mock struct {
 
 	*cli.Configuration
 
-	handler *lmocks.MockHandler
+	handler     *lmocks.MockHandler
+	connectionH *ccmocks.MockHandler
 
 	ctrl *gomock.Controller
 
@@ -37,6 +40,7 @@ func newMock(t *testing.T, config *cli.Configuration) (m *Mock) {
 	m.ctrl = gomock.NewController(t)
 
 	m.handler = lmocks.NewMockHandler(m.ctrl)
+	m.connectionH = ccmocks.NewMockHandler(m.ctrl)
 
 	m.cli = cli.NewCli(config, m.handler)
 
@@ -49,7 +53,10 @@ func setupTest(m *Mock) func() {
 	}
 
 	if m.Configuration != nil {
+		m.connectionH.EXPECT().Config().Return(&connection.Configuration{})
+
 		m.handler.EXPECT().Init(gomock.Eq(""))
+		m.handler.EXPECT().Connection().Return(m.connectionH)
 		m.handler.EXPECT().Close()
 
 		if err := m.cli.Init(); err != nil {
