@@ -16,9 +16,11 @@ var WireSet = wire.NewSet(NewWorker, NewConfiguration,
 	wire.Bind(new(Handler), new(*Worker)))
 
 type EventHandler interface {
+	//TODO: Remove Start and End handlers. It can be solved with decorator
 	OnStartWorker()
 	OnEndWorker()
 
+	//TODO: Remove Pre and Post handlers. It can be solved with decorator
 	OnPreTask(task *common.Task)
 	OnPostTask(task *common.Task)
 	OnThreadHeartbeat(threadId int)
@@ -37,6 +39,7 @@ type Handler interface {
 	StopWorker()
 }
 
+//TODO: Benchmark tests
 //Worker stores configuration for server activation
 type Worker struct {
 	taskQueue     chan *common.Task

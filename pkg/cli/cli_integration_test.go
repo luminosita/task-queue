@@ -116,7 +116,7 @@ func TestContainerStart(t *testing.T) {
 
 func readTestData() (testdata []json.RawMessage, err error) {
 	//TODO: read from test volume or test path (Docker and local testing)
-	bytes, err := ioutil.ReadFile("../test/testdata/integration_test_tasks.json")
+	bytes, err := ioutil.ReadFile("../test/data/integration_test_tasks.json")
 
 	if err != nil {
 		return nil, err
